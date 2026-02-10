@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class RoomStatus(str, Enum):
     WAITING = "waiting"
     PLAYING = "playing"
+    FINISHED = "finished"
 
 
 class HandPhase(str, Enum):
@@ -40,6 +41,7 @@ class CreateRoomRequest(BaseModel):
     sb_amount: int
     initial_chips: int
     rebuy_minimum: int = 0  # 0 means must be zero to rebuy
+    hand_interval: int = 5  # seconds between hands
 
 
 class JoinRoomRequest(BaseModel):
@@ -73,12 +75,20 @@ class Player(BaseModel):
     total_bet_this_hand: int = 0
     has_acted: bool = False
     is_connected: bool = True
+    last_action: Optional[str] = None  # e.g. "raise:200", "call:100", "check", "fold"
+    total_rebuys: int = 0
 
 
 class PotInfo(BaseModel):
     id: str
     amount: int
     eligible_players: list[str]  # player_ids
+
+
+class SettlementProposal(BaseModel):
+    proposer_id: str
+    pot_winners: dict[str, list[str]]  # pot_id -> [winner_ids]
+    confirmed_by: list[str] = []
 
 
 class HandState(BaseModel):
@@ -93,7 +103,7 @@ class HandState(BaseModel):
     action_order: list[str] = []
     action_index: int = 0
     last_raiser_id: Optional[str] = None
-    street_complete: bool = False
+    settlement_proposal: Optional[SettlementProposal] = None
 
 
 class Room(BaseModel):
@@ -104,6 +114,7 @@ class Room(BaseModel):
     bb_amount: int = 0
     initial_chips: int
     rebuy_minimum: int = 0
+    hand_interval: int = 5  # seconds between hands
     players: dict[str, Player] = {}
     seats: dict[int, Optional[str]] = {}  # seat_index -> player_id
     hand: Optional[HandState] = None

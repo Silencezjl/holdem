@@ -10,6 +10,14 @@ export interface Player {
   total_bet_this_hand: number;
   has_acted: boolean;
   is_connected: boolean;
+  last_action: string | null;
+  total_rebuys: number;
+}
+
+export interface SettlementProposal {
+  proposer_id: string;
+  pot_winners: Record<string, string[]>;
+  confirmed_by: string[];
 }
 
 export interface PotInfo {
@@ -30,21 +38,32 @@ export interface HandState {
   action_order: string[];
   action_index: number;
   last_raiser_id: string | null;
-  street_complete: boolean;
+  settlement_proposal: SettlementProposal | null;
 }
 
 export interface Room {
   id: string;
-  status: 'waiting' | 'playing';
+  status: 'waiting' | 'playing' | 'finished';
   owner_id: string;
   sb_amount: number;
   bb_amount: number;
   initial_chips: number;
   rebuy_minimum: number;
+  hand_interval: number;
   players: Record<string, Player>;
   seats: Record<number, string | null>;
   hand: HandState | null;
   hand_number: number;
+}
+
+export interface Standing {
+  player_id: string;
+  player_name: string;
+  player_emoji: string;
+  chips: number;
+  total_rebuys: number;
+  total_investment: number;
+  net: number;
 }
 
 export interface RoomListItem {

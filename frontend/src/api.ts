@@ -12,6 +12,7 @@ export async function createRoom(data: {
   sb_amount: number;
   initial_chips: number;
   rebuy_minimum: number;
+  hand_interval?: number;
 }) {
   const res = await fetch(`${API_BASE}/api/rooms`, {
     method: 'POST',

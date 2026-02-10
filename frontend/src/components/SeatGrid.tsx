@@ -15,7 +15,7 @@ export default function SeatGrid({ room, playerId, onSit, onStand }: Props) {
   const seats = Array.from({ length: 12 }, (_, i) => i);
 
   return (
-    <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+    <div className="grid grid-cols-3 gap-3">
       {seats.map(idx => {
         const pid = room.seats[idx];
         const player = pid ? room.players[pid] : null;
@@ -26,34 +26,47 @@ export default function SeatGrid({ room, playerId, onSit, onStand }: Props) {
           <button
             key={idx}
             onClick={() => {
-              if (isEmpty && mySeat < 0) onSit(idx);
-              else if (isMe) onStand();
+              if (isEmpty && mySeat < 0) {
+                onSit(idx);
+              } else if (isEmpty && mySeat >= 0) {
+                onStand();
+                setTimeout(() => onSit(idx), 100);
+              } else if (isMe) {
+                onStand();
+              }
             }}
             disabled={!isEmpty && !isMe}
-            className={`relative flex flex-col items-center justify-center p-2 rounded-xl border-2 transition min-h-[80px] ${
+            className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition min-h-[120px] ${
               isMe
-                ? 'border-blue-500 bg-blue-900/40'
+                ? player?.ready
+                  ? 'border-green-500 bg-green-900/30'
+                  : 'border-blue-500 bg-blue-900/40'
+                : player?.ready
+                ? 'border-green-600/60 bg-green-900/20'
                 : player
                 ? 'border-slate-600 bg-slate-800'
                 : 'border-dashed border-slate-600 bg-slate-800/50 hover:border-slate-400'
             }`}
           >
             <span className="text-[10px] absolute top-1 left-2 text-slate-500">#{idx + 1}</span>
+            {player?.ready && (
+              <span className="absolute top-1 right-1.5 text-[9px] font-bold text-green-400 bg-green-900/60 px-1.5 py-0.5 rounded">✓</span>
+            )}
             {player ? (
               <>
-                <span className="text-2xl">{player.emoji}</span>
-                <span className="text-xs font-medium mt-0.5 truncate max-w-full">
+                <span className="text-3xl">{player.emoji}</span>
+                <span className="text-xs font-medium mt-1 truncate max-w-full">
                   {player.name}
                 </span>
-                {player.ready && (
-                  <span className="text-[10px] text-green-400 font-bold">✓ 准备</span>
-                )}
+                <span className="text-[10px] text-green-400 mt-0.5">
+                  {player.chips}
+                </span>
                 {isMe && (
                   <span className="text-[10px] text-blue-400">(我)</span>
                 )}
               </>
             ) : (
-              <span className="text-slate-600 text-xs">空座</span>
+              <span className="text-slate-600 text-sm">空座</span>
             )}
           </button>
         );

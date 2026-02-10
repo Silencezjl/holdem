@@ -13,8 +13,10 @@ from .models import (
 )
 from .redis_manager import save_room, get_room, list_rooms, delete_room, close_redis
 from .game_engine import (
-    start_hand, process_action, settle_pots, get_seated_players,
-    can_rebuy, do_rebuy, get_active_players, do_advance_street,
+    start_hand, process_action, get_seated_players,
+    can_rebuy, do_rebuy, get_active_players,
+    propose_settlement, confirm_settlement, reject_settlement,
+    end_game,
 )
 from .ws_manager import manager
 
@@ -83,6 +85,7 @@ async def create_room(req: CreateRoomRequest):
         sb_amount=req.sb_amount,
         initial_chips=req.initial_chips,
         rebuy_minimum=req.rebuy_minimum,
+        hand_interval=req.hand_interval,
         players={player_id: player},
     )
 
@@ -166,7 +169,13 @@ async def websocket_endpoint(ws: WebSocket, room_id: str, player_id: str):
                 await ws.send_json({"type": "error", "message": "Room no longer exists"})
                 break
 
-            if msg_type == "sit":
+            if msg_type == "ping":
+                await manager.send_to_player(room_id, player_id, {
+                    "type": "pong",
+                    "timestamp": data.get("timestamp", 0),
+                })
+                continue
+            elif msg_type == "sit":
                 room, resp = handle_sit(room, player_id, data)
             elif msg_type == "stand":
                 room, resp = handle_stand(room, player_id)
@@ -174,12 +183,16 @@ async def websocket_endpoint(ws: WebSocket, room_id: str, player_id: str):
                 room, resp = handle_ready(room, player_id)
             elif msg_type == "action":
                 room, resp = handle_action(room, player_id, data)
-            elif msg_type == "settle":
-                room, resp = handle_settle(room, player_id, data)
+            elif msg_type == "propose_settle":
+                room, resp = handle_propose_settle(room, player_id, data)
+            elif msg_type == "confirm_settle":
+                room, resp = handle_confirm_settle(room, player_id)
+            elif msg_type == "reject_settle":
+                room, resp = handle_reject_settle(room, player_id)
             elif msg_type == "rebuy":
                 room, resp = handle_rebuy(room, player_id)
-            elif msg_type == "next_street":
-                room, resp = handle_next_street(room, player_id)
+            elif msg_type == "end_game":
+                room, resp = handle_end_game(room, player_id)
             else:
                 resp = {"type": "error", "message": f"Unknown message type: {msg_type}"}
 
@@ -285,7 +298,7 @@ def handle_action(room: Room, player_id: str, data: dict) -> tuple[Room, dict]:
     return room, {"type": "event", "event": "action", **event}
 
 
-def handle_settle(room: Room, player_id: str, data: dict) -> tuple[Room, dict]:
+def handle_propose_settle(room: Room, player_id: str, data: dict) -> tuple[Room, dict]:
     if not room.hand or room.hand.phase != HandPhase.SHOWDOWN:
         return room, {"type": "error", "message": "Not in showdown"}
 
@@ -293,12 +306,29 @@ def handle_settle(room: Room, player_id: str, data: dict) -> tuple[Room, dict]:
     if not pot_winners:
         return room, {"type": "error", "message": "No winners specified"}
 
-    room, event = settle_pots(room, pot_winners)
-
+    room, event = propose_settlement(room, player_id, pot_winners)
     if "error" in event:
         return room, {"type": "error", "message": event["error"]}
 
+    return room, {"type": "event", "event": "settlement_proposed", **event}
+
+
+def handle_confirm_settle(room: Room, player_id: str) -> tuple[Room, dict]:
+    room, event = confirm_settlement(room, player_id)
+    if "error" in event:
+        return room, {"type": "error", "message": event["error"]}
+    if event.get("waiting"):
+        return room, {"type": "event", "event": "settlement_confirmed", **event}
+    # All confirmed -> settled
     return room, {"type": "event", "event": "settled", **event}
+
+
+def handle_reject_settle(room: Room, player_id: str) -> tuple[Room, dict]:
+    room, event = reject_settlement(room, player_id)
+    if "error" in event:
+        return room, {"type": "error", "message": event["error"]}
+    player = room.players[player_id]
+    return room, {"type": "event", "event": "settlement_rejected", "rejector_name": player.name, **event}
 
 
 def handle_rebuy(room: Room, player_id: str) -> tuple[Room, dict]:
@@ -308,20 +338,12 @@ def handle_rebuy(room: Room, player_id: str) -> tuple[Room, dict]:
     return room, {"type": "event", "event": "rebuy", **event}
 
 
-def handle_next_street(room: Room, player_id: str) -> tuple[Room, dict]:
-    """Manually advance to next street (for flop/turn/river since cards are physical)."""
-    if not room.hand:
-        return room, {"type": "error", "message": "No active hand"}
+def handle_end_game(room: Room, player_id: str) -> tuple[Room, dict]:
+    """Room owner ends the game and gets final standings."""
+    if player_id != room.owner_id:
+        return room, {"type": "error", "message": "Only room owner can end the game"}
+    if room.status == RoomStatus.PLAYING and room.hand and room.hand.phase not in (HandPhase.HAND_START, HandPhase.HAND_END):
+        return room, {"type": "error", "message": "Cannot end game during active hand"}
 
-    hand = room.hand
-    if hand.phase == HandPhase.SHOWDOWN:
-        return room, {"type": "error", "message": "Already in showdown"}
-
-    if not hand.street_complete:
-        return room, {"type": "error", "message": "Current street not complete"}
-
-    room, event = do_advance_street(room)
-    if isinstance(event, dict) and "error" in event:
-        return room, {"type": "error", "message": event["error"]}
-
-    return room, {"type": "event", "event": "street_advanced", **(event or {})}
+    room, event = end_game(room)
+    return room, {"type": "event", "event": "game_ended", **event}

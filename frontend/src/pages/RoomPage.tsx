@@ -1,21 +1,32 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { connectWs } from '../api';
+import { Standing } from '../types';
 import SeatGrid from '../components/SeatGrid';
 import PlayerCards from '../components/PlayerCards';
 import ActionPanel from '../components/ActionPanel';
 import SettlementPanel from '../components/SettlementPanel';
 
+const PHASE_CN: Record<string, string> = {
+  hand_start: '开始', preflop: '翻牌前', flop: '翻牌',
+  turn: '转牌', river: '河牌', showdown: '摊牌', hand_end: '结束',
+};
+
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const {
-    playerId, room, connected,
-    setRoom, setWs, setConnected, addEvent, setError, error, events,
+    playerId, room, connected, latency, error,
+    setRoom, setWs, setConnected, setLatency, addEvent, setError,
+    standings, setStandings, phaseNotice, setPhaseNotice,
   } = useStore();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  const pingTimer = useRef<NodeJS.Timeout | null>(null);
+  const prevPhaseRef = useRef<string | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
   const connect = useCallback(() => {
     if (!roomId || !playerId) return;
@@ -26,14 +37,25 @@ export default function RoomPage() {
     socket.onopen = () => {
       setConnected(true);
       setError(null);
+      // Start ping interval
+      pingTimer.current = setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+        }
+      }, 3000);
     };
 
     socket.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.type === 'room_state') {
+        if (data.type === 'pong') {
+          setLatency(Date.now() - data.timestamp);
+        } else if (data.type === 'room_state') {
           setRoom(data.room);
         } else if (data.type === 'event') {
+          if (data.event === 'game_ended' && data.standings) {
+            setStandings(data.standings as Standing[]);
+          }
           addEvent(data.event + (data.detail ? `: ${data.detail}` : ''));
         } else if (data.type === 'error') {
           setError(data.message);
@@ -44,7 +66,7 @@ export default function RoomPage() {
 
     socket.onclose = () => {
       setConnected(false);
-      // Auto-reconnect
+      if (pingTimer.current) clearInterval(pingTimer.current);
       reconnectTimer.current = setTimeout(() => connect(), 2000);
     };
 
@@ -54,7 +76,7 @@ export default function RoomPage() {
 
     wsRef.current = socket;
     setWs(socket);
-  }, [roomId, playerId, setRoom, setWs, setConnected, addEvent, setError]);
+  }, [roomId, playerId, setRoom, setWs, setConnected, setLatency, addEvent, setError, setStandings]);
 
   useEffect(() => {
     if (!playerId || !roomId) {
@@ -64,9 +86,61 @@ export default function RoomPage() {
     connect();
     return () => {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      if (pingTimer.current) clearInterval(pingTimer.current);
       if (wsRef.current) wsRef.current.close();
     };
   }, [playerId, roomId, connect, navigate]);
+
+  // Detect phase changes for notification
+  useEffect(() => {
+    const currentPhase = room?.hand?.phase ?? null;
+    if (currentPhase && prevPhaseRef.current && currentPhase !== prevPhaseRef.current) {
+      const cn = PHASE_CN[currentPhase] || currentPhase;
+      setPhaseNotice(cn);
+      setTimeout(() => setPhaseNotice(null), 2500);
+    }
+    prevPhaseRef.current = currentPhase;
+  }, [room?.hand?.phase, setPhaseNotice]);
+
+  // Auto-start countdown after hand end
+  useEffect(() => {
+    if (!room || !playerId) return;
+    const myPlayer = room.players[playerId];
+    if (!myPlayer || myPlayer.seat < 0) return;
+
+    const isWaiting = room.status === 'waiting';
+    const handEnded = isWaiting && room.hand_number > 0;
+
+    if (handEnded && !myPlayer.ready) {
+      const needsRebuy = myPlayer.chips <= room.rebuy_minimum;
+      if (needsRebuy) {
+        setCountdown(null);
+        return;
+      }
+      // Start countdown
+      const interval = room.hand_interval || 5;
+      setCountdown(interval);
+      let remaining = interval;
+      countdownRef.current = setInterval(() => {
+        remaining--;
+        setCountdown(remaining);
+        if (remaining <= 0) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          // Auto-ready
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'ready' }));
+          }
+          setCountdown(null);
+        }
+      }, 1000);
+    } else {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      setCountdown(null);
+    }
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, playerId, room?.hand_interval, room?.rebuy_minimum, room?.players]);
 
   const send = useCallback((data: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -80,10 +154,52 @@ export default function RoomPage() {
   const handleAction = (action: string, amount?: number) => {
     send({ type: 'action', action, amount: amount || 0 });
   };
-  const handleSettle = (potWinners: Record<string, string[]>) => {
-    send({ type: 'settle', pot_winners: potWinners });
+  const handlePropose = (potWinners: Record<string, string[]>) => {
+    send({ type: 'propose_settle', pot_winners: potWinners });
   };
+  const handleConfirm = () => send({ type: 'confirm_settle' });
+  const handleReject = () => send({ type: 'reject_settle' });
   const handleRebuy = () => send({ type: 'rebuy' });
+  const handleEndGame = () => send({ type: 'end_game' });
+
+  // Final standings screen
+  if (standings) {
+    return (
+      <div className="flex flex-col min-h-screen max-w-lg mx-auto px-4 py-6">
+        <h2 className="text-2xl font-bold text-center text-white mb-1">🏆 最终结算</h2>
+        <p className="text-center text-xs text-slate-400 mb-4">整场游戏输赢排名</p>
+        <div className="space-y-2">
+          {standings.map((s: Standing, idx: number) => (
+            <div key={s.player_id} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+              idx === 0 ? 'border-yellow-500 bg-yellow-900/20' :
+              s.net >= 0 ? 'border-green-700/50 bg-slate-800' : 'border-red-700/50 bg-slate-800'
+            }`}>
+              <span className="text-lg font-bold text-slate-400 w-6">
+                {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`}
+              </span>
+              <span className="text-xl">{s.player_emoji}</span>
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium text-white">{s.player_name}</span>
+                <div className="text-[10px] text-slate-400">
+                  筹码 {s.chips} · 投入 {s.total_investment}
+                  {s.total_rebuys > 0 && ` · 补码 ${s.total_rebuys}次`}
+                </div>
+              </div>
+              <span className={`text-lg font-bold ${s.net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {s.net >= 0 ? '+' : ''}{s.net}
+              </span>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => { setStandings(null); navigate('/'); }}
+          className="mt-6 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition"
+        >
+          返回首页
+        </button>
+      </div>
+    );
+  }
 
   if (!room || !playerId) {
     return (
@@ -100,11 +216,10 @@ export default function RoomPage() {
   const isWaiting = room.status === 'waiting';
   const isPlaying = room.status === 'playing';
   const isShowdown = room.hand?.phase === 'showdown';
-  const isStreetComplete = room.hand?.street_complete === true;
   const isSeated = myPlayer?.seat >= 0;
-
+  const isOwner = playerId === room.owner_id;
   const canRebuy = isWaiting && myPlayer && myPlayer.chips <= room.rebuy_minimum;
-  const handleNextStreet = () => send({ type: 'next_street' });
+  const firstHand = room.hand_number === 0;
 
   return (
     <div className="flex flex-col min-h-screen max-w-lg mx-auto">
@@ -112,15 +227,10 @@ export default function RoomPage() {
       <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate('/')}
-              className="text-slate-400 hover:text-white text-sm"
-            >
+            <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm">
               ← 退出
             </button>
-            <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">
-              #{room.id}
-            </span>
+            <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">#{room.id}</span>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <span>SB:{room.sb_amount}</span>
@@ -128,14 +238,17 @@ export default function RoomPage() {
             <span className={connected ? 'text-green-400' : 'text-red-400'}>
               {connected ? '●' : '○'}
             </span>
+            <span className="text-slate-500">{latency}ms</span>
           </div>
         </div>
-        {room.hand_number > 0 && (
-          <div className="text-center text-[10px] text-slate-500 mt-0.5">
-            第 {room.hand_number} 手
-          </div>
-        )}
       </div>
+
+      {/* Phase transition overlay */}
+      {phaseNotice && (
+        <div className="mx-4 mt-2 py-3 bg-indigo-600/90 rounded-xl text-center animate-pulse">
+          <span className="text-white font-bold text-lg">🃏 进入 {phaseNotice}</span>
+        </div>
+      )}
 
       {/* Error bar */}
       {error && (
@@ -146,9 +259,9 @@ export default function RoomPage() {
 
       {/* Main content */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {isWaiting && !room.hand?.phase ? (
+        {isWaiting && firstHand ? (
           <>
-            {/* Waiting state */}
+            {/* First hand waiting state */}
             <div className="bg-slate-800/50 rounded-xl p-3 text-center">
               <p className="text-sm text-slate-400">
                 初始筹码: <span className="text-white font-bold">{room.initial_chips}</span>
@@ -161,118 +274,106 @@ export default function RoomPage() {
               </p>
             </div>
 
-            <SeatGrid
-              room={room}
-              playerId={playerId}
-              onSit={handleSit}
-              onStand={handleStand}
-            />
+            <SeatGrid room={room} playerId={playerId} onSit={handleSit} onStand={handleStand} />
 
-            {/* Ready button & rebuy */}
             {isSeated && (
               <div className="space-y-2">
                 <button
                   onClick={handleReady}
                   className={`w-full py-3 rounded-xl font-bold text-lg transition ${
-                    myPlayer.ready
-                      ? 'bg-green-700 text-white'
-                      : 'bg-green-600 hover:bg-green-700 text-white'
+                    myPlayer.ready ? 'bg-green-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
                   }`}
                 >
                   {myPlayer.ready ? '✓ 已准备 (点击取消)' : '准备'}
                 </button>
-
                 {canRebuy && (
-                  <button
-                    onClick={handleRebuy}
-                    className="w-full py-2 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-medium transition"
-                  >
+                  <button onClick={handleRebuy} className="w-full py-2 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-medium transition">
                     补码 → {room.initial_chips}
                   </button>
                 )}
-
-                <div className="text-center text-sm text-slate-400">
-                  我的筹码: <span className="font-bold text-green-400">{myPlayer.chips}</span>
-                </div>
               </div>
             )}
 
-            {/* Player count */}
             <div className="text-center text-xs text-slate-500">
-              {Object.values(room.players).filter(p => p.seat >= 0).length} 人就座 ·
-              {Object.values(room.players).filter(p => p.ready).length} 人准备 ·
-              至少需要 2 人
+              {Object.values(room.players).filter(p => p.seat >= 0).length} 人就座 ·{' '}
+              {Object.values(room.players).filter(p => p.ready).length} 人准备 · 至少需要 2 人
             </div>
+          </>
+        ) : isWaiting && !firstHand ? (
+          <>
+            {/* Between hands - auto countdown */}
+            <PlayerCards room={room} playerId={playerId} />
+
+            <div className="bg-slate-800 rounded-xl p-4 text-center space-y-2">
+              {canRebuy ? (
+                <>
+                  <p className="text-sm text-orange-400">筹码不足，请补码后继续</p>
+                  <button onClick={handleRebuy} className="w-full py-3 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-bold text-lg transition">
+                    补码 → {room.initial_chips}
+                  </button>
+                </>
+              ) : countdown !== null ? (
+                <div>
+                  <p className="text-slate-400 text-sm">下一手自动开始</p>
+                  <p className="text-4xl font-bold text-white mt-1">{countdown}</p>
+                </div>
+              ) : myPlayer?.ready ? (
+                <p className="text-green-400 text-sm">✓ 等待其他玩家...</p>
+              ) : (
+                <p className="text-slate-400 text-sm">准备中...</p>
+              )}
+            </div>
+
+            {/* Owner end game button */}
+            {isOwner && (
+              <button onClick={handleEndGame} className="w-full py-2 bg-red-900/60 hover:bg-red-800 border border-red-700 rounded-xl text-red-300 font-medium text-sm transition">
+                结束游戏 · 最终结算
+              </button>
+            )}
           </>
         ) : (
           <>
             {/* Playing state */}
             <PlayerCards room={room} playerId={playerId} />
 
-            {isShowdown ? (
+            {isShowdown && (
               <SettlementPanel
                 room={room}
                 playerId={playerId}
-                onSettle={handleSettle}
+                onPropose={handlePropose}
+                onConfirm={handleConfirm}
+                onReject={handleReject}
               />
-            ) : isStreetComplete ? (
-              <div className="bg-slate-800 rounded-xl p-4 space-y-3">
-                <div className="text-center">
-                  <p className="text-sm text-slate-400 mb-1">
-                    当前阶段 <span className="text-blue-400 font-bold uppercase">{room.hand?.phase}</span> 下注完成
-                  </p>
-                  <p className="text-xs text-slate-500">请在线下完成发牌后，点击下方按钮进入下一街</p>
-                </div>
-                <button
-                  onClick={handleNextStreet}
-                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 rounded-xl text-white font-bold text-lg transition animate-pulse"
-                >
-                  🃏 进入下一街
-                </button>
-              </div>
-            ) : isPlaying ? (
-              <ActionPanel
-                room={room}
-                playerId={playerId}
-                onAction={handleAction}
-              />
-            ) : null}
-
-            {/* After hand end - back to waiting with rebuy option */}
-            {isWaiting && room.hand?.phase && (
-              <div className="space-y-2">
-                {canRebuy && (
-                  <button
-                    onClick={handleRebuy}
-                    className="w-full py-2 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-medium transition"
-                  >
-                    补码 → {room.initial_chips}
-                  </button>
-                )}
-                <button
-                  onClick={handleReady}
-                  className={`w-full py-3 rounded-xl font-bold text-lg transition ${
-                    myPlayer?.ready
-                      ? 'bg-green-700 text-white'
-                      : 'bg-green-600 hover:bg-green-700 text-white'
-                  }`}
-                >
-                  {myPlayer?.ready ? '✓ 已准备' : '准备下一手'}
-                </button>
-              </div>
             )}
           </>
         )}
       </div>
 
-      {/* Event log */}
-      {events.length > 0 && (
-        <div className="border-t border-slate-800 px-4 py-2 max-h-24 overflow-y-auto bg-slate-900/80">
-          {events.slice(-5).map(evt => (
-            <div key={evt.id} className="text-[10px] text-slate-500 py-0.5">
-              {evt.text}
+      {/* Bottom fixed area - my info + actions */}
+      {isPlaying && myPlayer && !isShowdown && (
+        <div className="sticky bottom-0 z-10 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-4 py-2">
+          {/* My chips info */}
+          <div className="flex items-center justify-between mb-2 text-sm">
+            <span className="text-slate-400">
+              {myPlayer.emoji} {myPlayer.name}
+            </span>
+            <div className="flex items-center gap-3">
+              {myPlayer.total_rebuys > 0 && (
+                <span className="text-[11px] text-orange-400">补码 {myPlayer.total_rebuys}次</span>
+              )}
+              <span className="font-bold text-green-400">💰 {myPlayer.chips}</span>
             </div>
-          ))}
+          </div>
+          <ActionPanel room={room} playerId={playerId} onAction={handleAction} />
+        </div>
+      )}
+
+      {/* Owner end game button during game (in between hands) */}
+      {isPlaying && isOwner && !room.hand?.current_player_id && (
+        <div className="px-4 pb-2">
+          <button onClick={handleEndGame} className="w-full py-2 bg-red-900/40 hover:bg-red-800 border border-red-700/50 rounded-xl text-red-300 font-medium text-xs transition">
+            结束游戏
+          </button>
         </div>
       )}
     </div>

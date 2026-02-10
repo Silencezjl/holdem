@@ -21,6 +21,7 @@ export default function HomePage() {
   const [sb, setSb] = useState(10);
   const [initialChips, setInitialChips] = useState(1000);
   const [rebuyMin, setRebuyMin] = useState(0);
+  const [handInterval, setHandInterval] = useState(5);
   const [rooms, setRooms] = useState<RoomListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -66,6 +67,7 @@ export default function HomePage() {
         sb_amount: sb,
         initial_chips: initialChips,
         rebuy_minimum: rebuyMin,
+        hand_interval: handInterval,
       });
       setPlayer(res.player_id, name.trim(), emoji);
       setRoomId(res.room_id);
@@ -210,6 +212,23 @@ export default function HomePage() {
               onChange={e => setRebuyMin(Math.max(0, parseInt(e.target.value) || 0))}
               min={0}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm text-slate-400 mb-1">每手间隔（秒）</label>
+            <div className="flex gap-2 flex-wrap">
+              {[3, 5, 8, 10, 15].map(v => (
+                <button
+                  key={v}
+                  onClick={() => setHandInterval(v)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                    handInterval === v ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  }`}
+                >
+                  {v}s
+                </button>
+              ))}
+            </div>
           </div>
 
           <button

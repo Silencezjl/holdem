@@ -3,7 +3,7 @@ import uuid
 from typing import Optional
 from .models import (
     Room, HandState, HandPhase, Player, PlayerAction,
-    PlayerStatus, PotInfo, RoomStatus,
+    PlayerStatus, PotInfo, RoomStatus, SettlementProposal,
 )
 
 
@@ -73,6 +73,7 @@ def start_hand(room: Room) -> Room:
         p.current_bet = 0
         p.total_bet_this_hand = 0
         p.has_acted = False
+        p.last_action = None
     
     # Determine dealer position
     dealer_seat = find_next_dealer(room)
@@ -105,12 +106,14 @@ def start_hand(room: Room) -> Room:
     sb_player.chips -= sb_actual
     sb_player.current_bet = sb_actual
     sb_player.total_bet_this_hand = sb_actual
+    sb_player.last_action = f"sb:{sb_actual}"
     if sb_player.chips == 0:
         sb_player.status = PlayerStatus.ALL_IN
     
     bb_player.chips -= bb_actual
     bb_player.current_bet = bb_actual
     bb_player.total_bet_this_hand = bb_actual
+    bb_player.last_action = f"bb:{bb_actual}"
     if bb_player.chips == 0:
         bb_player.status = PlayerStatus.ALL_IN
     
@@ -166,12 +169,14 @@ def process_action(room: Room, player_id: str, action: PlayerAction, amount: int
     if action == PlayerAction.FOLD:
         player.status = PlayerStatus.FOLDED
         player.has_acted = True
+        player.last_action = "fold"
         event["detail"] = "folded"
         
     elif action == PlayerAction.CHECK:
         if hand.current_bet > player.current_bet:
             return room, {"error": "Cannot check, must call or raise"}
         player.has_acted = True
+        player.last_action = "check"
         event["detail"] = "checked"
         
     elif action == PlayerAction.CALL:
@@ -184,6 +189,7 @@ def process_action(room: Room, player_id: str, action: PlayerAction, amount: int
         if player.chips == 0:
             player.status = PlayerStatus.ALL_IN
         player.has_acted = True
+        player.last_action = f"call:{actual_call}"
         event["detail"] = f"called {actual_call}"
         event["amount"] = actual_call
         
@@ -203,6 +209,7 @@ def process_action(room: Room, player_id: str, action: PlayerAction, amount: int
         if player.chips == 0:
             player.status = PlayerStatus.ALL_IN
         player.has_acted = True
+        player.last_action = f"raise:{actual_raise_to}"
         # Reset has_acted for others who need to respond to raise
         for pid in hand.action_order:
             if pid != player_id:
@@ -220,6 +227,7 @@ def process_action(room: Room, player_id: str, action: PlayerAction, amount: int
         hand.pot += all_in_amount
         player.chips = 0
         player.status = PlayerStatus.ALL_IN
+        player.last_action = f"all_in:{player.current_bet}"
         if player.current_bet > hand.current_bet:
             hand.current_bet = player.current_bet
             hand.last_raiser_id = player_id
@@ -325,19 +333,8 @@ def advance_to_next_player(room: Room):
 
 
 def advance_street(room: Room) -> tuple[Room, Optional[dict]]:
-    """Mark current street as complete, pause for physical card dealing."""
+    """Auto-advance to the next street."""
     hand = room.hand
-    hand.street_complete = True
-    hand.current_player_id = None
-    return room, {"phase": hand.phase.value, "street_complete": True}
-
-
-def do_advance_street(room: Room) -> tuple[Room, Optional[dict]]:
-    """Actually advance to the next street (called when player clicks next)."""
-    hand = room.hand
-    if not hand or not hand.street_complete:
-        return room, {"error": "Street not complete"}
-
     phase_order = [HandPhase.PREFLOP, HandPhase.FLOP, HandPhase.TURN, HandPhase.RIVER, HandPhase.SHOWDOWN]
     current_idx = phase_order.index(hand.phase)
     
@@ -352,13 +349,13 @@ def do_advance_street(room: Room) -> tuple[Room, Optional[dict]]:
     hand.phase = next_phase
     hand.current_bet = 0
     hand.last_raiser_id = None
-    hand.street_complete = False
     
-    # Reset player bets for new street
+    # Reset player bets and last_action for new street
     for p in room.players.values():
         p.current_bet = 0
         if p.status == PlayerStatus.ACTIVE:
             p.has_acted = False
+            p.last_action = None
     
     # Build action order from SB (or first active after dealer)
     action_order = build_action_order(room, after_seat=hand.dealer_seat)
@@ -370,7 +367,7 @@ def do_advance_street(room: Room) -> tuple[Room, Optional[dict]]:
     else:
         return advance_to_showdown(room)
     
-    return room, {"phase": next_phase.value}
+    return room, {"phase": next_phase.value, "auto_advance": True}
 
 
 def advance_to_showdown(room: Room) -> tuple[Room, Optional[dict]]:
@@ -409,38 +406,48 @@ def end_hand_single_winner(room: Room) -> tuple[Room, Optional[dict]]:
 
 
 def calculate_pots(room: Room) -> list[PotInfo]:
-    """Calculate main pot and side pots based on all-in amounts."""
+    """Calculate main pot and side pots based on all-in amounts.
+    
+    Side pots are only created when players are all-in with different
+    amounts. If nobody is all-in, there is just one main pot.
+    """
     active = get_active_players(room)
     if not active:
         return []
     
-    # Gather all bet amounts from active players
-    bets = []
-    for p in get_seated_players(room):
-        if p.total_bet_this_hand > 0:
-            bets.append((p.id, p.total_bet_this_hand, p.status != PlayerStatus.FOLDED))
+    # Gather all players who contributed chips this hand
+    contributors = [p for p in get_seated_players(room) if p.total_bet_this_hand > 0]
     
-    if not bets:
+    if not contributors:
         return [PotInfo(id=str(uuid.uuid4())[:8], amount=room.hand.pot, eligible_players=[p.id for p in active])]
     
-    # Sort by bet amount
-    bets.sort(key=lambda x: x[1])
+    # Only all-in players create side pot boundaries
+    all_in_levels = sorted(set(
+        p.total_bet_this_hand for p in contributors
+        if p.status == PlayerStatus.ALL_IN
+    ))
+    
+    # If no all-in players, just one main pot
+    if not all_in_levels:
+        return [PotInfo(
+            id=str(uuid.uuid4())[:8],
+            amount=room.hand.pot,
+            eligible_players=[p.id for p in active],
+        )]
     
     pots = []
     prev_level = 0
-    remaining_players = [(pid, amt, eligible) for pid, amt, eligible in bets]
     
-    levels = sorted(set(amt for _, amt, _ in bets))
-    
-    for level in levels:
+    for level in all_in_levels:
         pot_amount = 0
         eligible = []
-        for pid, amt, is_active in remaining_players:
-            contribution = min(amt, level) - prev_level
+        for p in contributors:
+            contribution = min(p.total_bet_this_hand, level) - prev_level
             if contribution > 0:
                 pot_amount += contribution
-            if is_active and amt >= level:
-                eligible.append(pid)
+            # Eligible if not folded and bet at least this level
+            if p.status != PlayerStatus.FOLDED and p.total_bet_this_hand >= level:
+                eligible.append(p.id)
         
         if pot_amount > 0 and eligible:
             pots.append(PotInfo(
@@ -450,7 +457,24 @@ def calculate_pots(room: Room) -> list[PotInfo]:
             ))
         prev_level = level
     
-    # If no pots created, create one main pot
+    # Remaining pot above the highest all-in level
+    remaining = 0
+    eligible = []
+    for p in contributors:
+        contribution = p.total_bet_this_hand - prev_level
+        if contribution > 0:
+            remaining += contribution
+        if p.status != PlayerStatus.FOLDED and p.total_bet_this_hand > prev_level:
+            eligible.append(p.id)
+    
+    if remaining > 0 and eligible:
+        pots.append(PotInfo(
+            id=str(uuid.uuid4())[:8],
+            amount=remaining,
+            eligible_players=eligible,
+        ))
+    
+    # Fallback
     if not pots:
         pots.append(PotInfo(
             id=str(uuid.uuid4())[:8],
@@ -461,11 +485,55 @@ def calculate_pots(room: Room) -> list[PotInfo]:
     return pots
 
 
-def settle_pots(room: Room, pot_winners: dict[str, list[str]]) -> tuple[Room, dict]:
-    """Settle pots by distributing to winners. pot_winners: pot_id -> [winner_ids]"""
+def propose_settlement(room: Room, player_id: str, pot_winners: dict[str, list[str]]) -> tuple[Room, dict]:
+    """A player proposes settlement. All showdown players must confirm."""
     hand = room.hand
     if not hand or hand.phase != HandPhase.SHOWDOWN:
         return room, {"error": "Not in showdown phase"}
+    
+    hand.settlement_proposal = SettlementProposal(
+        proposer_id=player_id,
+        pot_winners=pot_winners,
+        confirmed_by=[player_id],  # proposer auto-confirms
+    )
+    return room, {"proposal": True, "proposer_id": player_id}
+
+
+def confirm_settlement(room: Room, player_id: str) -> tuple[Room, dict]:
+    """A player confirms the settlement proposal."""
+    hand = room.hand
+    if not hand or not hand.settlement_proposal:
+        return room, {"error": "No settlement proposal"}
+    
+    if player_id not in hand.settlement_proposal.confirmed_by:
+        hand.settlement_proposal.confirmed_by.append(player_id)
+    
+    # Check if all eligible players confirmed
+    active = get_active_players(room)
+    active_ids = {p.id for p in active}
+    all_confirmed = all(pid in hand.settlement_proposal.confirmed_by for pid in active_ids)
+    
+    if all_confirmed:
+        return execute_settlement(room)
+    
+    return room, {"confirmed": True, "player_id": player_id, "waiting": True}
+
+
+def reject_settlement(room: Room, player_id: str) -> tuple[Room, dict]:
+    """A player rejects the settlement proposal."""
+    hand = room.hand
+    if not hand or not hand.settlement_proposal:
+        return room, {"error": "No settlement proposal"}
+    
+    hand.settlement_proposal = None
+    return room, {"rejected": True, "player_id": player_id}
+
+
+def execute_settlement(room: Room) -> tuple[Room, dict]:
+    """Execute the confirmed settlement."""
+    hand = room.hand
+    proposal = hand.settlement_proposal
+    pot_winners = proposal.pot_winners
     
     settlements = []
     
@@ -474,7 +542,6 @@ def settle_pots(room: Room, pot_winners: dict[str, list[str]]) -> tuple[Room, di
         if not winners:
             continue
         
-        # Filter winners to only eligible players
         valid_winners = [w for w in winners if w in pot.eligible_players]
         if not valid_winners:
             continue
@@ -532,4 +599,33 @@ def do_rebuy(room: Room, player_id: str) -> tuple[Room, dict]:
         return room, {"error": "Cannot rebuy"}
     player = room.players[player_id]
     player.chips = room.initial_chips
+    player.total_rebuys += 1
     return room, {"rebuy": True, "player_id": player_id, "chips": player.chips}
+
+
+def get_final_standings(room: Room) -> list[dict]:
+    """Calculate final game standings with profit/loss including rebuys."""
+    standings = []
+    for p in room.players.values():
+        if p.seat < 0:
+            continue
+        total_investment = room.initial_chips * (1 + p.total_rebuys)
+        net = p.chips - total_investment
+        standings.append({
+            "player_id": p.id,
+            "player_name": p.name,
+            "player_emoji": p.emoji,
+            "chips": p.chips,
+            "total_rebuys": p.total_rebuys,
+            "total_investment": total_investment,
+            "net": net,
+        })
+    standings.sort(key=lambda x: x["net"], reverse=True)
+    return standings
+
+
+def end_game(room: Room) -> tuple[Room, dict]:
+    """End the entire game session and calculate final standings."""
+    standings = get_final_standings(room)
+    room.status = RoomStatus.FINISHED
+    return room, {"standings": standings}
