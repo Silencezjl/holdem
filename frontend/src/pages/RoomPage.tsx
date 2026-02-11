@@ -256,14 +256,13 @@ export default function RoomPage() {
       <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {!isPlaying ? (
-              <button onClick={handleLeave} className="text-slate-400 hover:text-white text-sm">
-                ← 退出
-              </button>
-            ) : (
-              <span className="text-slate-600 text-sm">← 游戏中</span>
+            {!isPlaying && (
+              <button onClick={handleLeave} className="text-slate-500 hover:text-white text-[11px]">退出</button>
             )}
             <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">#{room.id}</span>
+            {room.hand_number > 0 && (
+              <span className="text-[11px] text-slate-500">第{room.hand_number}手</span>
+            )}
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <span>SB:{room.sb_amount}</span>

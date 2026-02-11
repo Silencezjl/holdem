@@ -58,21 +58,31 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
 
   return (
     <div>
-      {/* Game info bar */}
+      {/* Phase display with community cards */}
       {hand && (
-        <div className="relative rounded-xl mb-3 overflow-hidden">
-          <div className="grid grid-cols-2 gap-2 py-2 px-3 bg-slate-800/80">
-            <div className="text-center">
-              <div className="text-[10px] text-slate-400 leading-tight">阶段</div>
-              <div className="text-base font-semibold text-blue-400 leading-snug">{PHASE_CN[hand.phase] || hand.phase}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-[10px] text-slate-400 leading-tight">手数</div>
-              <div className="text-base font-bold text-white leading-snug">第 {room.hand_number} 手</div>
-            </div>
+        <div className="relative flex items-center gap-3 px-3.5 py-2.5 bg-gradient-to-r from-blue-900/30 to-indigo-900/20 border border-blue-700/40 rounded-xl mb-3 overflow-hidden">
+          <div className="flex items-baseline gap-2 flex-shrink-0">
+            <span className="text-xl font-bold text-blue-400">阶段</span>
+            <span className="text-lg font-bold text-blue-300">{PHASE_CN[hand.phase] || hand.phase}</span>
+          </div>
+          <div className="flex-1 flex justify-end gap-1">
+            {[1, 2, 3, 4, 5].map(i => {
+              const faceUp =
+                (hand.phase === 'flop' && i <= 3) ||
+                (hand.phase === 'turn' && i <= 4) ||
+                ((hand.phase === 'river' || hand.phase === 'showdown') && i <= 5);
+              return (
+                <img
+                  key={i}
+                  src={faceUp ? `/card/${i}.svg` : '/card/back.svg'}
+                  alt={faceUp ? `card ${i}` : 'back'}
+                  className="h-10 w-auto rounded-sm drop-shadow-sm"
+                />
+              );
+            })}
           </div>
           {phaseNotice && (
-            <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/95 animate-pulse">
+            <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/95 rounded-xl animate-pulse">
               <span className="text-white font-bold text-lg">🃏 进入 {phaseNotice}</span>
             </div>
           )}

@@ -1,4 +1,4 @@
-FROM node:18-alpine AS build
+FROM docker.m.daocloud.io/node:18-alpine AS build
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ ENV REACT_APP_WS_URL=
 
 RUN npm run build
 
-FROM nginx:alpine
+FROM docker.m.daocloud.io/nginx:alpine
 
 COPY --from=build /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
