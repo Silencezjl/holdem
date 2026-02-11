@@ -1,9 +1,11 @@
 import React from 'react';
 import { Room } from '../types';
+import ChipDisplay, { PotChipDisplay } from './ChipDisplay';
 
 interface Props {
   room: Room;
   playerId: string;
+  phaseNotice?: string | null;
 }
 
 const PHASE_CN: Record<string, string> = {
@@ -46,7 +48,7 @@ function formatAction(action: string | null): { text: string; color: string } | 
   return null;
 }
 
-export default function PlayerCards({ room, playerId }: Props) {
+export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
   const hand = room.hand;
   const seatedPlayers = Object.values(room.players)
     .filter(p => p.seat >= 0)
@@ -56,27 +58,42 @@ export default function PlayerCards({ room, playerId }: Props) {
 
   return (
     <div>
-      {/* Pot info */}
+      {/* Game info bar */}
       {hand && (
-        <div className="grid grid-cols-4 gap-2 py-2.5 px-3 bg-slate-800/80 rounded-xl mb-5">
-          <div className="text-center">
-            <div className="text-[10px] text-slate-400 leading-tight">底池</div>
-            <div className="text-base font-bold text-yellow-400 leading-snug">{hand.pot}</div>
+        <div className="relative rounded-xl mb-3 overflow-hidden">
+          <div className="grid grid-cols-2 gap-2 py-2 px-3 bg-slate-800/80">
+            <div className="text-center">
+              <div className="text-[10px] text-slate-400 leading-tight">阶段</div>
+              <div className="text-base font-semibold text-blue-400 leading-snug">{PHASE_CN[hand.phase] || hand.phase}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-[10px] text-slate-400 leading-tight">手数</div>
+              <div className="text-base font-bold text-white leading-snug">第 {room.hand_number} 手</div>
+            </div>
           </div>
-          <div className="text-center">
-            <div className="text-[10px] text-slate-400 leading-tight">阶段</div>
-            <div className="text-base font-semibold text-blue-400 leading-snug">{PHASE_CN[hand.phase] || hand.phase}</div>
+          {phaseNotice && (
+            <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/95 animate-pulse">
+              <span className="text-white font-bold text-lg">🃏 进入 {phaseNotice}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pot display with chips */}
+      {hand && hand.pot > 0 && (
+        <div className="flex items-center gap-3 px-3.5 py-3 bg-gradient-to-r from-yellow-900/30 to-amber-900/20 border border-yellow-700/40 rounded-xl mb-[30px]">
+          <div className="flex items-baseline gap-2 flex-shrink-0">
+            <span className="text-xl font-bold text-yellow-400">底池</span>
+            <span className="text-lg font-bold text-yellow-300">{hand.pot}</span>
           </div>
-          <div className="text-center">
-            <div className="text-[10px] text-slate-400 leading-tight">当前注</div>
-            <div className="text-base font-bold text-white leading-snug">{hand.current_bet}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-[10px] text-slate-400 leading-tight">手数</div>
-            <div className="text-base font-bold text-white leading-snug">第 {room.hand_number} 手</div>
+          <div className="flex-1 flex justify-end overflow-x-auto">
+            <PotChipDisplay playerBets={seatedPlayers.map(p => p.total_bet_this_hand)} size={26} />
           </div>
         </div>
       )}
+
+      {/* Player list header */}
+      <div className="text-sm font-semibold text-slate-400 mb-2">玩家列表</div>
 
       {/* Player rows - horizontal bars */}
       <div className="space-y-3">
@@ -91,7 +108,7 @@ export default function PlayerCards({ room, playerId }: Props) {
           return (
             <div
               key={p.id}
-              className={`relative flex items-center gap-3 px-3.5 py-3 rounded-xl border transition-all ${
+              className={`relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all ${
                 isCurrentTurn
                   ? 'border-yellow-400 bg-yellow-900/20 shadow-md shadow-yellow-900/30'
                   : isFolded
@@ -122,17 +139,22 @@ export default function PlayerCards({ room, playerId }: Props) {
                   {isCurrentTurn && !isFolded && (
                     <span className="text-[10px] font-bold text-yellow-400 animate-pulse">⏳ 行动中</span>
                   )}
+                  {actionInfo && (
+                    <span className={`text-[11px] font-bold ${actionInfo.color}`}>{actionInfo.text}</span>
+                  )}
+                  {!actionInfo && isAllIn && (
+                    <span className="text-[11px] font-bold text-red-500">All-In</span>
+                  )}
                 </div>
               </div>
 
-              {/* Right side: only bet/action info */}
-              <div className="flex-shrink-0 text-right">
-                {actionInfo ? (
-                  <div className={`text-sm font-bold ${actionInfo.color}`}>{actionInfo.text}</div>
-                ) : isAllIn ? (
-                  <div className="text-sm font-bold text-red-500">All-In {p.current_bet}</div>
-                ) : hand && p.current_bet > 0 ? (
-                  <div className="text-sm font-bold text-orange-400">下注 {p.current_bet}</div>
+              {/* Right side: chip SVG display for current bet */}
+              <div className="flex-shrink-0">
+                {hand && p.current_bet > 0 ? (
+                  <div className="flex items-center gap-1">
+                    <ChipDisplay amount={p.current_bet} size={22} maxChips={6} />
+                    <span className="text-xs font-bold text-orange-400 ml-0.5">{p.current_bet}</span>
+                  </div>
                 ) : null}
               </div>
 

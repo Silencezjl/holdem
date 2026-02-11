@@ -1,5 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Room } from '../types';
+import { snapToChip } from './ChipDisplay';
+
+const CHIP_DENOMS = [500, 100, 50, 25, 10, 5] as const;
 
 interface Props {
   room: Room;
@@ -23,11 +26,11 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
     if (!hand) return [];
     const pot = hand.pot;
     const items: { label: string; amount: number }[] = [];
-    const twoBB = bb * 2 + currentBet;
-    if (twoBB <= myChips + myBet) items.push({ label: '2BB', amount: twoBB });
-    const halfPot = Math.floor(pot / 2) + currentBet;
-    if (halfPot > currentBet && halfPot <= myChips + myBet) items.push({ label: '1/2 Pot', amount: halfPot });
-    const fullPot = pot + currentBet;
+    const twoBB = snapToChip(bb * 2 + currentBet);
+    if (twoBB > currentBet && twoBB <= myChips + myBet) items.push({ label: '2BB', amount: twoBB });
+    const halfPot = snapToChip(Math.floor(pot / 2) + currentBet);
+    if (halfPot > currentBet && halfPot <= myChips + myBet) items.push({ label: '½ Pot', amount: halfPot });
+    const fullPot = snapToChip(pot + currentBet);
     if (fullPot > currentBet && fullPot <= myChips + myBet) items.push({ label: 'Pot', amount: fullPot });
     return items;
   }, [hand, bb, currentBet, myChips, myBet]);
@@ -41,7 +44,8 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
 
   const canCheck = currentBet <= myBet;
   const canCall = callAmount > 0 && callAmount <= myChips;
-  const minRaise = currentBet + bb;
+  const minRaise = snapToChip(currentBet + bb);
+  const maxRaise = myChips + myBet;
 
   if (isFolded || isAllIn) {
     return (
@@ -62,6 +66,16 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
   }
 
   if (showRaise) {
+    const effectiveRaise = raiseAmount || minRaise;
+    const addChip = (d: number) => {
+      const next = effectiveRaise + d;
+      if (next <= maxRaise) setRaiseAmount(next);
+    };
+    const removeChip = (d: number) => {
+      const next = effectiveRaise - d;
+      if (next >= minRaise) setRaiseAmount(next);
+    };
+
     return (
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -71,50 +85,84 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
           </button>
         </div>
 
-        {/* Quick raise buttons */}
-        <div className="flex gap-2 flex-wrap">
-          {quickRaises.map(q => (
-            <button
-              key={q.label}
-              onClick={() => setRaiseAmount(q.amount)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                raiseAmount === q.amount
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-              }`}
-            >
-              {q.label} ({q.amount})
-            </button>
-          ))}
+        {/* Current amount display */}
+        <div className="text-center py-1">
+          <span className="text-2xl font-bold text-white">{effectiveRaise}</span>
+          <span className="text-xs text-slate-400 ml-2">(加注 {effectiveRaise - currentBet})</span>
         </div>
 
-        {/* Slider */}
-        <div>
-          <input
-            type="range"
-            min={minRaise}
-            max={myChips + myBet}
-            value={raiseAmount || minRaise}
-            onChange={e => setRaiseAmount(parseInt(e.target.value))}
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs text-slate-400 mt-1">
-            <span>{minRaise}</span>
-            <span className="text-lg font-bold text-white">{raiseAmount || minRaise}</span>
-            <span>{myChips + myBet}</span>
-          </div>
+        {/* Chip buttons to add */}
+        <div className="flex justify-center gap-1.5">
+          {CHIP_DENOMS.map(d => {
+            const canAdd = effectiveRaise + d <= maxRaise;
+            return (
+              <button
+                key={d}
+                onClick={() => addChip(d)}
+                disabled={!canAdd}
+                className="relative flex flex-col items-center disabled:opacity-30 transition active:scale-95"
+              >
+                <img
+                  src={`/poker_chip/chip_${d}.svg`}
+                  alt={`+${d}`}
+                  className="w-11 h-11 drop-shadow-md"
+                />
+                <span className="text-[9px] text-green-400 font-bold mt-0.5">+{d}</span>
+              </button>
+            );
+          })}
         </div>
+
+        {/* Chip buttons to remove */}
+        <div className="flex justify-center gap-1.5">
+          {CHIP_DENOMS.map(d => {
+            const canRemove = effectiveRaise - d >= minRaise;
+            return (
+              <button
+                key={d}
+                onClick={() => removeChip(d)}
+                disabled={!canRemove}
+                className="relative flex flex-col items-center disabled:opacity-30 transition active:scale-95"
+              >
+                <img
+                  src={`/poker_chip/chip_${d}.svg`}
+                  alt={`-${d}`}
+                  className="w-8 h-8 drop-shadow-md opacity-60"
+                />
+                <span className="text-[9px] text-red-400 font-bold mt-0.5">-{d}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Quick raise presets */}
+        {quickRaises.length > 0 && (
+          <div className="flex gap-1.5 justify-center">
+            {quickRaises.map(q => (
+              <button
+                key={q.label}
+                onClick={() => setRaiseAmount(q.amount)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition ${
+                  effectiveRaise === q.amount
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                {q.label} {q.amount}
+              </button>
+            ))}
+          </div>
+        )}
 
         <button
           onClick={() => {
-            const amt = raiseAmount || minRaise;
-            onAction('raise', amt);
+            onAction('raise', effectiveRaise);
             setShowRaise(false);
             setRaiseAmount(0);
           }}
           className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-white font-bold transition"
         >
-          确认加注 → {raiseAmount || minRaise}
+          确认加注 → {effectiveRaise}
         </button>
       </div>
     );

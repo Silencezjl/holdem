@@ -276,13 +276,6 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {/* Phase transition overlay */}
-      {phaseNotice && (
-        <div className="mx-4 mt-2 py-3 bg-indigo-600/90 rounded-xl text-center animate-pulse">
-          <span className="text-white font-bold text-lg">🃏 进入 {phaseNotice}</span>
-        </div>
-      )}
-
       {/* Error bar */}
       {error && (
         <div className="mx-4 mt-2 px-3 py-2 bg-red-900/60 border border-red-700 rounded-lg text-sm text-red-300">
@@ -335,7 +328,7 @@ export default function RoomPage() {
         ) : isWaiting && !firstHand ? (
           <>
             {/* Between hands - auto countdown */}
-            <PlayerCards room={room} playerId={playerId} />
+            <PlayerCards room={room} playerId={playerId} phaseNotice={phaseNotice} />
 
             <div className="bg-slate-800 rounded-xl p-4 text-center space-y-2">
               {canCashout ? (
@@ -364,7 +357,7 @@ export default function RoomPage() {
         ) : (
           <>
             {/* Playing state */}
-            <PlayerCards room={room} playerId={playerId} />
+            <PlayerCards room={room} playerId={playerId} phaseNotice={phaseNotice} />
 
             {isShowdown && (
               <SettlementPanel
