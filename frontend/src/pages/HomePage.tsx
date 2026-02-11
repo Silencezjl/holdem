@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { createRoom, joinRoom, fetchRooms, getRandomProfile } from '../api';
+import { createRoom, joinRoom, fetchRooms, getRandomProfile, checkPlayerRoom } from '../api';
 import { RoomListItem } from '../types';
 
 const EMOJIS = [
@@ -14,17 +14,19 @@ type Tab = 'create' | 'join';
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { setPlayer, setRoomId, reset } = useStore();
+  const { playerId, playerName: savedName, playerEmoji: savedEmoji, setPlayer, setRoomId } = useStore();
   const [tab, setTab] = useState<Tab>('create');
-  const [name, setName] = useState('');
-  const [emoji, setEmoji] = useState('');
+  const [name, setName] = useState(savedName);
+  const [emoji, setEmoji] = useState(savedEmoji);
   const [sb, setSb] = useState(10);
   const [initialChips, setInitialChips] = useState(1000);
   const [rebuyMin, setRebuyMin] = useState(0);
   const [handInterval, setHandInterval] = useState(5);
+  const [maxChips, setMaxChips] = useState(0);
   const [rooms, setRooms] = useState<RoomListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [checking, setChecking] = useState(true);
 
   const initProfile = useCallback(async () => {
     try {
@@ -37,10 +39,22 @@ export default function HomePage() {
     }
   }, []);
 
+  // Check if player is already in a room → auto-redirect
   useEffect(() => {
-    reset();
-    initProfile();
-  }, [initProfile, reset]);
+    checkPlayerRoom(playerId).then(res => {
+      if (res.room_id) {
+        setRoomId(res.room_id);
+        navigate(`/room/${res.room_id}`);
+      } else {
+        localStorage.removeItem('holdem_room_id');
+        setChecking(false);
+      }
+    }).catch(() => setChecking(false));
+  }, [playerId, navigate, setRoomId]);
+
+  useEffect(() => {
+    if (!checking && !name && !emoji) initProfile();
+  }, [checking, initProfile, name, emoji]);
 
   const loadRooms = useCallback(async () => {
     try {
@@ -68,6 +82,8 @@ export default function HomePage() {
         initial_chips: initialChips,
         rebuy_minimum: rebuyMin,
         hand_interval: handInterval,
+        max_chips: maxChips,
+        device_id: playerId,
       });
       setPlayer(res.player_id, name.trim(), emoji);
       setRoomId(res.room_id);
@@ -87,6 +103,7 @@ export default function HomePage() {
         room_id: roomId,
         player_name: name.trim(),
         player_emoji: emoji,
+        device_id: playerId,
       });
       setPlayer(res.player_id, name.trim(), emoji);
       setRoomId(res.room_id);
@@ -97,6 +114,17 @@ export default function HomePage() {
       setLoading(false);
     }
   };
+
+  if (checking) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin text-4xl mb-4">🃏</div>
+          <p className="text-slate-400">检查对局中...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center min-h-screen px-4 py-6 max-w-lg mx-auto">
@@ -215,6 +243,21 @@ export default function HomePage() {
           </div>
 
           <div>
+            <label className="block text-sm text-slate-400 mb-1">最高筹码量（超过后每手结算自动清码一次初始筹码，0=不限）</label>
+            <input
+              type="number"
+              className="w-full bg-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
+              value={maxChips}
+              onChange={e => setMaxChips(Math.max(0, parseInt(e.target.value) || 0))}
+              min={0}
+              placeholder="0 表示不限制"
+            />
+            {maxChips > 0 && (
+              <p className="text-xs text-slate-500 mt-1">超过 {maxChips} 筹码时，自动清码 {initialChips}</p>
+            )}
+          </div>
+
+          <div>
             <label className="block text-sm text-slate-400 mb-1">每手间隔（秒）</label>
             <div className="flex gap-2 flex-wrap">
               {[3, 5, 8, 10, 15].map(v => (
@@ -260,7 +303,7 @@ export default function HomePage() {
                     <span>SB: {r.sb_amount}</span>
                     <span>BB: {r.bb_amount}</span>
                     <span>底池: {r.initial_chips}</span>
-                    <span>👥 {r.player_count}</span>
+                    <span>👥 {r.player_count}在线</span>
                   </div>
                 </div>
                 <button

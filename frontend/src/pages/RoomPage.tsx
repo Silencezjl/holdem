@@ -1,12 +1,13 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { connectWs } from '../api';
+import { connectWs, leaveRoom } from '../api';
 import { Standing } from '../types';
 import SeatGrid from '../components/SeatGrid';
 import PlayerCards from '../components/PlayerCards';
 import ActionPanel from '../components/ActionPanel';
 import SettlementPanel from '../components/SettlementPanel';
+import { useWakeLock } from '../hooks/useWakeLock';
 
 const PHASE_CN: Record<string, string> = {
   hand_start: '开始', preflop: '翻牌前', flop: '翻牌',
@@ -14,19 +15,22 @@ const PHASE_CN: Record<string, string> = {
 };
 
 export default function RoomPage() {
-  const { roomId } = useParams<{ roomId: string }>();
+  const { roomId: urlRoomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const {
     playerId, room, connected, latency, error,
-    setRoom, setWs, setConnected, setLatency, addEvent, setError,
+    setRoom, setRoomId, setWs, setConnected, setLatency, addEvent, setError,
     standings, setStandings, phaseNotice, setPhaseNotice,
   } = useStore();
+  const roomId = urlRoomId || null;
+  useWakeLock();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
   const pingTimer = useRef<NodeJS.Timeout | null>(null);
   const prevPhaseRef = useRef<string | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownActive = useRef(false);
 
   const connect = useCallback(() => {
     if (!roomId || !playerId) return;
@@ -64,9 +68,15 @@ export default function RoomPage() {
       } catch { }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       setConnected(false);
       if (pingTimer.current) clearInterval(pingTimer.current);
+      if (event.code === 4001) {
+        // Invalid room or player - redirect to home
+        setRoomId(null);
+        navigate('/');
+        return;
+      }
       reconnectTimer.current = setTimeout(() => connect(), 2000);
     };
 
@@ -77,6 +87,14 @@ export default function RoomPage() {
     wsRef.current = socket;
     setWs(socket);
   }, [roomId, playerId, setRoom, setWs, setConnected, setLatency, addEvent, setError, setStandings]);
+
+  const handleLeave = useCallback(async () => {
+    if (roomId && playerId) {
+      try { await leaveRoom(roomId, playerId); } catch {}
+    }
+    setRoomId(null);
+    navigate('/');
+  }, [roomId, playerId, setRoomId, navigate]);
 
   useEffect(() => {
     if (!playerId || !roomId) {
@@ -113,11 +131,16 @@ export default function RoomPage() {
 
     if (handEnded && !myPlayer.ready) {
       const needsRebuy = myPlayer.chips <= room.rebuy_minimum;
-      if (needsRebuy) {
+      const needsCashout = room.max_chips > 0 && myPlayer.chips > room.max_chips;
+      if (needsRebuy || needsCashout) {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        countdownActive.current = false;
         setCountdown(null);
         return;
       }
-      // Start countdown
+      // Only start countdown if not already running
+      if (countdownActive.current) return;
+      countdownActive.current = true;
       const interval = room.hand_interval || 5;
       setCountdown(interval);
       let remaining = interval;
@@ -126,6 +149,7 @@ export default function RoomPage() {
         setCountdown(remaining);
         if (remaining <= 0) {
           if (countdownRef.current) clearInterval(countdownRef.current);
+          countdownActive.current = false;
           // Auto-ready
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: 'ready' }));
@@ -135,12 +159,14 @@ export default function RoomPage() {
       }, 1000);
     } else {
       if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownActive.current = false;
       setCountdown(null);
     }
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownActive.current = false;
     };
-  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, playerId, room?.hand_interval, room?.rebuy_minimum, room?.players]);
+  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, room?.players[playerId ?? '']?.chips, playerId]);
 
   const send = useCallback((data: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -160,6 +186,7 @@ export default function RoomPage() {
   const handleConfirm = () => send({ type: 'confirm_settle' });
   const handleReject = () => send({ type: 'reject_settle' });
   const handleRebuy = () => send({ type: 'rebuy' });
+  const handleCashout = () => send({ type: 'cashout' });
   const handleEndGame = () => send({ type: 'end_game' });
 
   // Final standings screen
@@ -182,7 +209,8 @@ export default function RoomPage() {
                 <span className="text-sm font-medium text-white">{s.player_name}</span>
                 <div className="text-[10px] text-slate-400">
                   筹码 {s.chips} · 投入 {s.total_investment}
-                  {s.total_rebuys > 0 && ` · 补码 ${s.total_rebuys}次`}
+                  {s.total_rebuys > 0 && ` · 补码 ${s.total_rebuys * (room?.initial_chips || 0)}`}
+                  {s.total_cashouts > 0 && ` · 清码 ${s.total_cashouts}`}
                 </div>
               </div>
               <span className={`text-lg font-bold ${s.net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -192,7 +220,7 @@ export default function RoomPage() {
           ))}
         </div>
         <button
-          onClick={() => { setStandings(null); navigate('/'); }}
+          onClick={() => { setStandings(null); setRoomId(null); navigate('/'); }}
           className="mt-6 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition"
         >
           返回首页
@@ -219,6 +247,7 @@ export default function RoomPage() {
   const isSeated = myPlayer?.seat >= 0;
   const isOwner = playerId === room.owner_id;
   const canRebuy = isWaiting && myPlayer && myPlayer.chips <= room.rebuy_minimum;
+  const canCashout = isWaiting && myPlayer && room.max_chips > 0 && myPlayer.chips > room.max_chips;
   const firstHand = room.hand_number === 0;
 
   return (
@@ -227,9 +256,13 @@ export default function RoomPage() {
       <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm">
-              ← 退出
-            </button>
+            {!isPlaying ? (
+              <button onClick={handleLeave} className="text-slate-400 hover:text-white text-sm">
+                ← 退出
+              </button>
+            ) : (
+              <span className="text-slate-600 text-sm">← 游戏中</span>
+            )}
             <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">#{room.id}</span>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -305,13 +338,10 @@ export default function RoomPage() {
             <PlayerCards room={room} playerId={playerId} />
 
             <div className="bg-slate-800 rounded-xl p-4 text-center space-y-2">
-              {canRebuy ? (
-                <>
-                  <p className="text-sm text-orange-400">筹码不足，请补码后继续</p>
-                  <button onClick={handleRebuy} className="w-full py-3 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-bold text-lg transition">
-                    补码 → {room.initial_chips}
-                  </button>
-                </>
+              {canCashout ? (
+                <p className="text-sm text-purple-400">筹码超过上限 ({room.max_chips})，请清码后继续</p>
+              ) : canRebuy ? (
+                <p className="text-sm text-orange-400">筹码不足，请补码后继续</p>
               ) : countdown !== null ? (
                 <div>
                   <p className="text-slate-400 text-sm">下一手自动开始</p>
@@ -359,7 +389,13 @@ export default function RoomPage() {
             </span>
             <div className="flex items-center gap-3">
               {myPlayer.total_rebuys > 0 && (
-                <span className="text-[11px] text-orange-400">补码 {myPlayer.total_rebuys}次</span>
+                <span className="text-[11px] text-orange-400">补码 {myPlayer.total_rebuys * room.initial_chips}</span>
+              )}
+              {myPlayer.total_cashouts > 0 && (
+                <span className="text-[11px] text-purple-400">清码 {myPlayer.total_cashouts}</span>
+              )}
+              {myPlayer.current_bet > 0 && (
+                <span className="text-[11px] text-yellow-400">已下注 {myPlayer.current_bet}</span>
               )}
               <span className="font-bold text-green-400">💰 {myPlayer.chips}</span>
             </div>
@@ -374,6 +410,22 @@ export default function RoomPage() {
           <button onClick={handleEndGame} className="w-full py-2 bg-red-900/40 hover:bg-red-800 border border-red-700/50 rounded-xl text-red-300 font-medium text-xs transition">
             结束游戏
           </button>
+        </div>
+      )}
+
+      {/* Bottom fixed cashout/rebuy buttons for between-hands */}
+      {isWaiting && !firstHand && myPlayer && (canCashout || canRebuy) && (
+        <div className="sticky bottom-0 z-10 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-4 py-3">
+          {canCashout && (
+            <button onClick={handleCashout} className="w-full py-3 bg-purple-600 hover:bg-purple-700 rounded-xl text-white font-bold text-lg transition">
+              清码 -{room.initial_chips} → 剩余 {myPlayer.chips - room.initial_chips}
+            </button>
+          )}
+          {canRebuy && (
+            <button onClick={handleRebuy} className="w-full py-3 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-bold text-lg transition">
+              补码 → {room.initial_chips}
+            </button>
+          )}
         </div>
       )}
     </div>

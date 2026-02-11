@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Room } from '../types';
 
 interface Props {
@@ -12,11 +12,27 @@ interface Props {
 export default function SettlementPanel({ room, playerId, onPropose, onConfirm, onReject }: Props) {
   const hand = room.hand;
   const [potWinners, setPotWinners] = useState<Record<string, string[]>>({});
+  const autoInitDone = useRef(false);
+
+  const pots = hand?.pots || [];
+  const proposal = hand?.settlement_proposal;
+
+  // Auto-select winner for pots with only one eligible player
+  useEffect(() => {
+    if (!hand || hand.phase !== 'showdown' || pots.length === 0 || autoInitDone.current) return;
+    autoInitDone.current = true;
+    const auto: Record<string, string[]> = {};
+    for (const pot of pots) {
+      if (pot.eligible_players.length === 1) {
+        auto[pot.id] = [pot.eligible_players[0]];
+      }
+    }
+    if (Object.keys(auto).length > 0) {
+      setPotWinners(prev => ({ ...auto, ...prev }));
+    }
+  }, [hand, pots]);
 
   if (!hand || hand.phase !== 'showdown') return null;
-
-  const pots = hand.pots || [];
-  const proposal = hand.settlement_proposal;
   const activePlayers = Object.values(room.players).filter(
     p => p.seat >= 0 && p.status !== 'folded' && p.status !== 'sitting_out'
   );
@@ -143,15 +159,16 @@ export default function SettlementPanel({ room, playerId, onPropose, onConfirm, 
               const p = room.players[pid];
               if (!p) return null;
               const isSelected = (potWinners[pot.id] || []).includes(pid);
+              const isSinglePlayer = pot.eligible_players.length === 1;
               return (
                 <button
                   key={pid}
-                  onClick={() => toggleWinner(pot.id, pid)}
+                  onClick={() => { if (!isSinglePlayer) toggleWinner(pot.id, pid); }}
                   className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border transition text-left ${
                     isSelected
                       ? 'border-yellow-500 bg-yellow-900/30 text-yellow-300'
                       : 'border-slate-600 bg-slate-700 text-slate-300 hover:border-slate-500'
-                  }`}
+                  } ${isSinglePlayer ? 'opacity-80 cursor-default' : ''}`}
                 >
                   <span>{p.emoji}</span>
                   <span className="text-xs truncate">{p.name}</span>

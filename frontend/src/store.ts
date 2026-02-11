@@ -1,8 +1,17 @@
 import { create } from 'zustand';
 import { Room, Standing } from './types';
 
+function getDeviceId(): string {
+  let id = localStorage.getItem('holdem_device_id');
+  if (!id) {
+    id = crypto.randomUUID?.() || `${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 8)}`;
+    localStorage.setItem('holdem_device_id', id);
+  }
+  return id;
+}
+
 interface AppState {
-  playerId: string | null;
+  playerId: string;
   playerName: string;
   playerEmoji: string;
   roomId: string | null;
@@ -31,10 +40,10 @@ interface AppState {
 }
 
 export const useStore = create<AppState>((set, get) => ({
-  playerId: null,
-  playerName: '',
-  playerEmoji: '',
-  roomId: null,
+  playerId: getDeviceId(),
+  playerName: localStorage.getItem('holdem_player_name') || '',
+  playerEmoji: localStorage.getItem('holdem_player_emoji') || '',
+  roomId: localStorage.getItem('holdem_room_id'),
   room: null,
   ws: null,
   connected: false,
@@ -45,10 +54,22 @@ export const useStore = create<AppState>((set, get) => ({
   standings: null,
   phaseNotice: null,
 
-  setPlayer: (id, name, emoji) => set({ playerId: id, playerName: name, playerEmoji: emoji }),
-  setProfile: (name, emoji) => set({ playerName: name, playerEmoji: emoji }),
+  setPlayer: (id, name, emoji) => {
+    localStorage.setItem('holdem_player_name', name);
+    localStorage.setItem('holdem_player_emoji', emoji);
+    set({ playerName: name, playerEmoji: emoji });
+  },
+  setProfile: (name, emoji) => {
+    localStorage.setItem('holdem_player_name', name);
+    localStorage.setItem('holdem_player_emoji', emoji);
+    set({ playerName: name, playerEmoji: emoji });
+  },
   setRoom: (room) => set({ room }),
-  setRoomId: (id) => set({ roomId: id }),
+  setRoomId: (id) => {
+    if (id) localStorage.setItem('holdem_room_id', id);
+    else localStorage.removeItem('holdem_room_id');
+    set({ roomId: id });
+  },
   setWs: (ws) => set({ ws }),
   setConnected: (c) => set({ connected: c }),
   setLatency: (ms) => set({ latency: ms }),
@@ -63,8 +84,8 @@ export const useStore = create<AppState>((set, get) => ({
   reset: () => {
     const { ws } = get();
     if (ws) ws.close();
+    localStorage.removeItem('holdem_room_id');
     set({
-      playerId: null,
       roomId: null,
       room: null,
       ws: null,

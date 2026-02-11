@@ -69,3 +69,15 @@ async def list_rooms() -> list[Room]:
         if room:
             rooms.append(room)
     return rooms
+
+
+async def flush_all_rooms():
+    """Delete all rooms from Redis."""
+    r = await get_redis()
+    ids = list(await r.smembers(_rooms_list_key()))
+    if ids:
+        pipe = r.pipeline()
+        for rid in ids:
+            pipe.delete(_room_key(rid))
+        pipe.delete(_rooms_list_key())
+        await pipe.execute()

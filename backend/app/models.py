@@ -42,12 +42,15 @@ class CreateRoomRequest(BaseModel):
     initial_chips: int
     rebuy_minimum: int = 0  # 0 means must be zero to rebuy
     hand_interval: int = 5  # seconds between hands
+    max_chips: int = 0  # 0 means no cap; >0 means auto-cashout above this
+    device_id: str = ""
 
 
 class JoinRoomRequest(BaseModel):
     room_id: str
     player_name: str
     player_emoji: str
+    device_id: str = ""
 
 
 class SeatRequest(BaseModel):
@@ -77,6 +80,7 @@ class Player(BaseModel):
     is_connected: bool = True
     last_action: Optional[str] = None  # e.g. "raise:200", "call:100", "check", "fold"
     total_rebuys: int = 0
+    total_cashouts: int = 0  # total chips cashed out
 
 
 class PotInfo(BaseModel):
@@ -115,10 +119,12 @@ class Room(BaseModel):
     initial_chips: int
     rebuy_minimum: int = 0
     hand_interval: int = 5  # seconds between hands
+    max_chips: int = 0  # 0 = no cap
     players: dict[str, Player] = {}
     seats: dict[int, Optional[str]] = {}  # seat_index -> player_id
     hand: Optional[HandState] = None
     hand_number: int = 0
+    last_all_disconnected_at: Optional[float] = None
 
     def model_post_init(self, __context) -> None:
         if self.bb_amount == 0:

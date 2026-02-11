@@ -277,8 +277,8 @@ def check_street_end(room: Room) -> tuple[Room, Optional[dict]]:
         advance_to_next_player(room)
         return room, None
     
-    # If no actionable players left (all are all-in or folded), go to showdown
-    if len(actionable) == 0:
+    # If 0 or 1 actionable players left, no more meaningful betting possible -> showdown
+    if len(actionable) <= 1:
         return advance_to_showdown(room)
     
     # Street is complete, advance
@@ -583,6 +583,34 @@ def reset_hand(room: Room):
             p.ready = False
 
 
+def can_cashout(room: Room, player_id: str) -> bool:
+    """Check if player is eligible to cashout (chips exceed max_chips)."""
+    if room.max_chips <= 0:
+        return False
+    player = room.players.get(player_id)
+    if not player:
+        return False
+    if room.status == RoomStatus.PLAYING:
+        return False
+    return player.chips > room.max_chips
+
+
+def do_cashout(room: Room, player_id: str) -> tuple[Room, dict]:
+    """Process a cashout for a player."""
+    if not can_cashout(room, player_id):
+        return room, {"error": "Cannot cashout"}
+    player = room.players[player_id]
+    cashout_amount = room.initial_chips
+    player.chips -= cashout_amount
+    player.total_cashouts += cashout_amount
+    return room, {
+        "cashout": True,
+        "player_id": player_id,
+        "cashout_amount": cashout_amount,
+        "remaining_chips": player.chips,
+    }
+
+
 def can_rebuy(room: Room, player_id: str) -> bool:
     """Check if player is eligible to rebuy."""
     player = room.players.get(player_id)
@@ -604,19 +632,21 @@ def do_rebuy(room: Room, player_id: str) -> tuple[Room, dict]:
 
 
 def get_final_standings(room: Room) -> list[dict]:
-    """Calculate final game standings with profit/loss including rebuys."""
+    """Calculate final game standings with profit/loss including rebuys and cashouts."""
     standings = []
     for p in room.players.values():
         if p.seat < 0:
             continue
         total_investment = room.initial_chips * (1 + p.total_rebuys)
-        net = p.chips - total_investment
+        total_value = p.chips + p.total_cashouts
+        net = total_value - total_investment
         standings.append({
             "player_id": p.id,
             "player_name": p.name,
             "player_emoji": p.emoji,
             "chips": p.chips,
             "total_rebuys": p.total_rebuys,
+            "total_cashouts": p.total_cashouts,
             "total_investment": total_investment,
             "net": net,
         })

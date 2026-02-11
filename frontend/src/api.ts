@@ -13,6 +13,8 @@ export async function createRoom(data: {
   initial_chips: number;
   rebuy_minimum: number;
   hand_interval?: number;
+  max_chips?: number;
+  device_id: string;
 }) {
   const res = await fetch(`${API_BASE}/api/rooms`, {
     method: 'POST',
@@ -26,12 +28,23 @@ export async function joinRoom(data: {
   room_id: string;
   player_name: string;
   player_emoji: string;
+  device_id: string;
 }) {
   const res = await fetch(`${API_BASE}/api/rooms/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+  return res.json();
+}
+
+export async function checkPlayerRoom(playerId: string): Promise<{ room_id: string | null }> {
+  const res = await fetch(`${API_BASE}/api/player-room/${playerId}`);
+  return res.json();
+}
+
+export async function leaveRoom(roomId: string, playerId: string) {
+  const res = await fetch(`${API_BASE}/api/rooms/${roomId}/leave/${playerId}`, { method: 'POST' });
   return res.json();
 }
 

@@ -102,7 +102,10 @@ export default function PlayerCards({ room, playerId }: Props) {
               }`}
             >
               {/* Emoji + name + chips (left) */}
-              <span className="text-2xl flex-shrink-0">{p.emoji}</span>
+              <div className="relative flex-shrink-0">
+                <span className="text-2xl">{p.emoji}</span>
+                <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-800 ${p.is_connected ? 'bg-green-400' : 'bg-red-500'}`} />
+              </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-slate-500">#{p.seat + 1}</span>

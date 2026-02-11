@@ -122,13 +122,6 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
 
   return (
     <div className="space-y-2">
-      {myBet > 0 && (
-        <div className="flex items-center justify-between px-1 text-xs">
-          <span className="text-slate-400">本轮已下注</span>
-          <span className="font-bold text-orange-400">{myBet}</span>
-        </div>
-      )}
-
       {/* Action buttons */}
       <div className="grid grid-cols-4 gap-1.5">
         <button

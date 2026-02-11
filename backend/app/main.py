@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+import time
 import uuid
 import random
 import json
@@ -11,14 +13,24 @@ from .models import (
     PlayerStatus, RoomStatus, HandPhase, ActionRequest,
     PlayerAction, SettlementVote, SeatRequest,
 )
-from .redis_manager import save_room, get_room, list_rooms, delete_room, close_redis
+from .redis_manager import save_room, get_room, list_rooms, delete_room, close_redis, flush_all_rooms
 from .game_engine import (
     start_hand, process_action, get_seated_players,
-    can_rebuy, do_rebuy, get_active_players,
+    can_rebuy, do_rebuy, can_cashout, do_cashout, get_active_players,
     propose_settlement, confirm_settlement, reject_settlement,
     end_game,
 )
 from .ws_manager import manager
+
+
+# Per-room locks to serialize state mutations and prevent race conditions
+_room_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_room_lock(room_id: str) -> asyncio.Lock:
+    if room_id not in _room_locks:
+        _room_locks[room_id] = asyncio.Lock()
+    return _room_locks[room_id]
 
 
 EMOJIS = [
@@ -30,8 +42,37 @@ EMOJIS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Clear all rooms on startup (data model changed)
+    await flush_all_rooms()
+    # Start background room cleanup task
+    task = asyncio.create_task(room_cleanup_task())
     yield
+    task.cancel()
     await close_redis()
+
+
+async def room_cleanup_task():
+    """Periodically clean up rooms with no online players for 10 minutes."""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            rooms = await list_rooms()
+            now = time.time()
+            for r in rooms:
+                online = any(p.is_connected for p in r.players.values())
+                if online:
+                    if r.last_all_disconnected_at is not None:
+                        r.last_all_disconnected_at = None
+                        await save_room(r)
+                else:
+                    if r.last_all_disconnected_at is None:
+                        r.last_all_disconnected_at = now
+                        await save_room(r)
+                    elif now - r.last_all_disconnected_at > 600:  # 10 minutes
+                        await delete_room(r.id)
+                        _room_locks.pop(r.id, None)
+        except Exception as e:
+            print(f"Room cleanup error: {e}")
 
 
 app = FastAPI(title="Holdem Chip Manager", lifespan=lifespan)
@@ -67,10 +108,29 @@ def room_to_broadcast(room: Room) -> dict:
 
 # ─── REST Endpoints ───
 
+async def remove_player_from_all_rooms(player_id: str):
+    """Remove a player from any room they're currently in."""
+    rooms = await list_rooms()
+    for r in rooms:
+        if player_id in r.players:
+            async with get_room_lock(r.id):
+                room = await get_room(r.id)
+                if room and player_id in room.players:
+                    player = room.players[player_id]
+                    if player.seat >= 0:
+                        room.seats[player.seat] = None
+                    del room.players[player_id]
+                    await save_room(room)
+                    await manager.broadcast(room.id, room_to_broadcast(room))
+
+
 @app.post("/api/rooms")
 async def create_room(req: CreateRoomRequest):
     room_id = generate_room_id()
-    player_id = generate_player_id()
+    player_id = req.device_id or generate_player_id()
+
+    # Remove player from any existing rooms
+    await remove_player_from_all_rooms(player_id)
 
     player = Player(
         id=player_id,
@@ -86,6 +146,7 @@ async def create_room(req: CreateRoomRequest):
         initial_chips=req.initial_chips,
         rebuy_minimum=req.rebuy_minimum,
         hand_interval=req.hand_interval,
+        max_chips=req.max_chips,
         players={player_id: player},
     )
 
@@ -98,18 +159,20 @@ async def get_rooms():
     rooms = await list_rooms()
     result = []
     for r in rooms:
-        if r.status == RoomStatus.WAITING:
-            owner = r.players.get(r.owner_id)
-            result.append({
-                "id": r.id,
-                "owner_name": owner.name if owner else "Unknown",
-                "owner_emoji": owner.emoji if owner else "❓",
-                "sb_amount": r.sb_amount,
-                "bb_amount": r.bb_amount,
-                "initial_chips": r.initial_chips,
-                "player_count": len(r.players),
-                "status": r.status.value,
-            })
+        if r.status != RoomStatus.WAITING:
+            continue
+        owner = r.players.get(r.owner_id)
+        online_count = sum(1 for p in r.players.values() if p.is_connected)
+        result.append({
+            "id": r.id,
+            "owner_name": owner.name if owner else "Unknown",
+            "owner_emoji": owner.emoji if owner else "❓",
+            "sb_amount": r.sb_amount,
+            "bb_amount": r.bb_amount,
+            "initial_chips": r.initial_chips,
+            "player_count": online_count,
+            "status": r.status.value,
+        })
     return result
 
 
@@ -119,7 +182,15 @@ async def join_room(req: JoinRoomRequest):
     if not room:
         raise HTTPException(404, "Room not found")
 
-    player_id = generate_player_id()
+    player_id = req.device_id or generate_player_id()
+
+    # If player already in this room (reconnection), just return
+    if player_id in room.players:
+        return {"room_id": room.id, "player_id": player_id}
+
+    # Remove player from any other rooms first
+    await remove_player_from_all_rooms(player_id)
+
     player = Player(
         id=player_id,
         name=req.player_name,
@@ -135,6 +206,38 @@ async def join_room(req: JoinRoomRequest):
     return {"room_id": room.id, "player_id": player_id}
 
 
+@app.get("/api/player-room/{player_id}")
+async def get_player_room(player_id: str):
+    """Check if a player is currently in an active room."""
+    rooms = await list_rooms()
+    for r in rooms:
+        if player_id in r.players and r.status != RoomStatus.FINISHED:
+            return {"room_id": r.id}
+    return {"room_id": None}
+
+
+@app.post("/api/rooms/{room_id}/leave/{player_id}")
+async def leave_room_api(room_id: str, player_id: str):
+    """Player intentionally leaves a room. Not allowed during active game."""
+    async with get_room_lock(room_id):
+        room = await get_room(room_id)
+        if not room:
+            return {"ok": True}
+        if room.status == RoomStatus.PLAYING:
+            raise HTTPException(400, "Cannot leave during game")
+        player = room.players.get(player_id)
+        if player:
+            if player.seat >= 0:
+                room.seats[player.seat] = None
+            del room.players[player_id]
+            # Transfer ownership if owner is leaving
+            if player_id == room.owner_id and room.players:
+                room.owner_id = next(iter(room.players))
+            await save_room(room)
+            await manager.broadcast(room_id, room_to_broadcast(room))
+    return {"ok": True}
+
+
 @app.get("/api/random-profile")
 async def random_profile():
     return {"name": random_name(), "emoji": random.choice(EMOJIS)}
@@ -146,28 +249,25 @@ async def random_profile():
 async def websocket_endpoint(ws: WebSocket, room_id: str, player_id: str):
     room = await get_room(room_id)
     if not room or player_id not in room.players:
+        await ws.accept()
         await ws.close(code=4001, reason="Invalid room or player")
         return
 
     await manager.connect(room_id, player_id, ws)
 
-    # Mark player connected
-    room.players[player_id].is_connected = True
-    await save_room(room)
-
-    # Send initial state
-    await manager.send_to_player(room_id, player_id, room_to_broadcast(room))
+    # Mark player connected under lock
+    async with get_room_lock(room_id):
+        room = await get_room(room_id)
+        if room and player_id in room.players:
+            room.players[player_id].is_connected = True
+            room.last_all_disconnected_at = None
+            await save_room(room)
+            await manager.broadcast(room_id, room_to_broadcast(room))
 
     try:
         while True:
             data = await ws.receive_json()
             msg_type = data.get("type")
-
-            # Reload room state
-            room = await get_room(room_id)
-            if not room:
-                await ws.send_json({"type": "error", "message": "Room no longer exists"})
-                break
 
             if msg_type == "ping":
                 await manager.send_to_player(room_id, player_id, {
@@ -175,35 +275,46 @@ async def websocket_endpoint(ws: WebSocket, room_id: str, player_id: str):
                     "timestamp": data.get("timestamp", 0),
                 })
                 continue
-            elif msg_type == "sit":
-                room, resp = handle_sit(room, player_id, data)
-            elif msg_type == "stand":
-                room, resp = handle_stand(room, player_id)
-            elif msg_type == "ready":
-                room, resp = handle_ready(room, player_id)
-            elif msg_type == "action":
-                room, resp = handle_action(room, player_id, data)
-            elif msg_type == "propose_settle":
-                room, resp = handle_propose_settle(room, player_id, data)
-            elif msg_type == "confirm_settle":
-                room, resp = handle_confirm_settle(room, player_id)
-            elif msg_type == "reject_settle":
-                room, resp = handle_reject_settle(room, player_id)
-            elif msg_type == "rebuy":
-                room, resp = handle_rebuy(room, player_id)
-            elif msg_type == "end_game":
-                room, resp = handle_end_game(room, player_id)
-            else:
-                resp = {"type": "error", "message": f"Unknown message type: {msg_type}"}
 
-            await save_room(room)
+            # Acquire per-room lock to prevent concurrent state mutations
+            async with get_room_lock(room_id):
+                # Reload room state inside lock
+                room = await get_room(room_id)
+                if not room:
+                    await ws.send_json({"type": "error", "message": "Room no longer exists"})
+                    break
 
-            if resp.get("type") == "error":
-                await manager.send_to_player(room_id, player_id, resp)
-            else:
-                await manager.broadcast(room_id, room_to_broadcast(room))
-                if resp.get("type") == "event":
-                    await manager.broadcast(room_id, resp)
+                if msg_type == "sit":
+                    room, resp = handle_sit(room, player_id, data)
+                elif msg_type == "stand":
+                    room, resp = handle_stand(room, player_id)
+                elif msg_type == "ready":
+                    room, resp = handle_ready(room, player_id)
+                elif msg_type == "action":
+                    room, resp = handle_action(room, player_id, data)
+                elif msg_type == "propose_settle":
+                    room, resp = handle_propose_settle(room, player_id, data)
+                elif msg_type == "confirm_settle":
+                    room, resp = handle_confirm_settle(room, player_id)
+                elif msg_type == "reject_settle":
+                    room, resp = handle_reject_settle(room, player_id)
+                elif msg_type == "rebuy":
+                    room, resp = handle_rebuy(room, player_id)
+                elif msg_type == "cashout":
+                    room, resp = handle_cashout(room, player_id)
+                elif msg_type == "end_game":
+                    room, resp = handle_end_game(room, player_id)
+                else:
+                    resp = {"type": "error", "message": f"Unknown message type: {msg_type}"}
+
+                await save_room(room)
+
+                if resp.get("type") == "error":
+                    await manager.send_to_player(room_id, player_id, resp)
+                else:
+                    await manager.broadcast(room_id, room_to_broadcast(room))
+                    if resp.get("type") == "event":
+                        await manager.broadcast(room_id, resp)
 
     except WebSocketDisconnect:
         pass
@@ -211,11 +322,15 @@ async def websocket_endpoint(ws: WebSocket, room_id: str, player_id: str):
         print(f"WS error: {e}")
     finally:
         manager.disconnect(room_id, player_id)
-        room = await get_room(room_id)
-        if room and player_id in room.players:
-            room.players[player_id].is_connected = False
-            await save_room(room)
-            await manager.broadcast(room_id, room_to_broadcast(room))
+        async with get_room_lock(room_id):
+            room = await get_room(room_id)
+            if room and player_id in room.players:
+                room.players[player_id].is_connected = False
+                # Track when all players disconnected for auto-cleanup
+                if not any(p.is_connected for p in room.players.values()):
+                    room.last_all_disconnected_at = time.time()
+                await save_room(room)
+                await manager.broadcast(room_id, room_to_broadcast(room))
 
 
 # ─── Message Handlers ───
@@ -335,7 +450,29 @@ def handle_rebuy(room: Room, player_id: str) -> tuple[Room, dict]:
     room, event = do_rebuy(room, player_id)
     if "error" in event:
         return room, {"type": "error", "message": event["error"]}
+    # Auto-ready after rebuy, skip countdown
+    player = room.players[player_id]
+    player.ready = True
+    seated = get_seated_players(room)
+    if len(seated) >= 2 and all(p.ready for p in seated):
+        room = start_hand(room)
+        event["hand_started"] = True
     return room, {"type": "event", "event": "rebuy", **event}
+
+
+def handle_cashout(room: Room, player_id: str) -> tuple[Room, dict]:
+    room, event = do_cashout(room, player_id)
+    if "error" in event:
+        return room, {"type": "error", "message": event["error"]}
+    # Auto-ready after cashout if no more cashout needed, skip countdown
+    player = room.players[player_id]
+    if not can_cashout(room, player_id):
+        player.ready = True
+        seated = get_seated_players(room)
+        if len(seated) >= 2 and all(p.ready for p in seated):
+            room = start_hand(room)
+            event["hand_started"] = True
+    return room, {"type": "event", "event": "cashout", **event}
 
 
 def handle_end_game(room: Room, player_id: str) -> tuple[Room, dict]:

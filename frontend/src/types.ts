@@ -12,6 +12,7 @@ export interface Player {
   is_connected: boolean;
   last_action: string | null;
   total_rebuys: number;
+  total_cashouts: number;
 }
 
 export interface SettlementProposal {
@@ -50,6 +51,7 @@ export interface Room {
   initial_chips: number;
   rebuy_minimum: number;
   hand_interval: number;
+  max_chips: number;
   players: Record<string, Player>;
   seats: Record<number, string | null>;
   hand: HandState | null;
@@ -62,6 +64,7 @@ export interface Standing {
   player_emoji: string;
   chips: number;
   total_rebuys: number;
+  total_cashouts: number;
   total_investment: number;
   net: number;
 }

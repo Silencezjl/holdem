@@ -54,7 +54,10 @@ export default function SeatGrid({ room, playerId, onSit, onStand }: Props) {
             )}
             {player ? (
               <>
-                <span className="text-3xl">{player.emoji}</span>
+                <div className="relative">
+                  <span className="text-3xl">{player.emoji}</span>
+                  <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-slate-800 ${player.is_connected ? 'bg-green-400' : 'bg-red-500'}`} />
+                </div>
                 <span className="text-xs font-medium mt-1 truncate max-w-full">
                   {player.name}
                 </span>
