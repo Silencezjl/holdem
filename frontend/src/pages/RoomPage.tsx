@@ -509,7 +509,7 @@ export default function RoomPage() {
               )}
               <span className="text-[11px] text-slate-400">后手</span>
               <span className="font-bold text-green-400 text-sm">{myPlayer.chips}</span>
-              <MyChipStack amount={myPlayer.chips} size={22} />
+              <MyChipStack amount={myPlayer.chips} size={28} />
             </div>
           </div>
           <ActionPanel room={room} playerId={playerId} onAction={handleAction} />

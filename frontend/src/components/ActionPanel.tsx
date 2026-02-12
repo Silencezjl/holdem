@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Room } from '../types';
 import { snapToChip } from './ChipDisplay';
 
@@ -13,6 +13,7 @@ interface Props {
 export default function ActionPanel({ room, playerId, onAction }: Props) {
   const [showRaise, setShowRaise] = useState(false);
   const [raiseAmount, setRaiseAmount] = useState(0);
+  const [confirmAllIn, setConfirmAllIn] = useState(false);
 
   const hand = room.hand;
   const player = room.players[playerId];
@@ -34,6 +35,18 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
     if (fullPot > currentBet && fullPot <= myChips + myBet) items.push({ label: 'Pot', amount: fullPot });
     return items;
   }, [hand, bb, currentBet, myChips, myBet]);
+
+  // Auto-cancel all-in confirmation after 3 seconds
+  useEffect(() => {
+    if (!confirmAllIn) return;
+    const timer = setTimeout(() => setConfirmAllIn(false), 3000);
+    return () => clearTimeout(timer);
+  }, [confirmAllIn]);
+
+  // Reset all-in confirmation when turn changes
+  useEffect(() => {
+    setConfirmAllIn(false);
+  }, [hand?.current_player_id]);
 
   if (!hand || !player) return null;
 
@@ -188,7 +201,7 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
           </button>
         ) : canCall ? (
           <button
-            onClick={() => onAction('call')}
+            onClick={() => onAction('call', callAmount)}
             className="py-2.5 bg-green-900/60 hover:bg-green-800 border border-green-700 rounded-xl text-green-300 font-bold text-sm transition"
           >
             Call {callAmount}
@@ -206,12 +219,24 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
           Raise
         </button>
 
-        <button
-          onClick={() => onAction('all_in')}
-          className="py-2.5 bg-purple-900/60 hover:bg-purple-800 border border-purple-700 rounded-xl text-purple-300 font-bold text-sm transition"
-        >
-          All-In
-        </button>
+        {confirmAllIn ? (
+          <button
+            onClick={() => {
+              onAction('all_in', myChips + myBet);
+              setConfirmAllIn(false);
+            }}
+            className="py-2.5 bg-red-700 hover:bg-red-600 border border-red-500 rounded-xl text-white font-bold text-sm transition animate-pulse"
+          >
+            确认All-In?
+          </button>
+        ) : (
+          <button
+            onClick={() => setConfirmAllIn(true)}
+            className="py-2.5 bg-purple-900/60 hover:bg-purple-800 border border-purple-700 rounded-xl text-purple-300 font-bold text-sm transition"
+          >
+            All-In
+          </button>
+        )}
       </div>
     </div>
   );
