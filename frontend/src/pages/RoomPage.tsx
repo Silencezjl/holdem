@@ -7,6 +7,9 @@ import SeatGrid from '../components/SeatGrid';
 import PlayerCards from '../components/PlayerCards';
 import ActionPanel from '../components/ActionPanel';
 import SettlementPanel from '../components/SettlementPanel';
+import WinChipsAnimation, { WinInfo } from '../components/WinChipsAnimation';
+import MyChipStack from '../components/MyChipStack';
+import BetToPotAnimation from '../components/BetToPotAnimation';
 import { useWakeLock } from '../hooks/useWakeLock';
 
 const PHASE_CN: Record<string, string> = {
@@ -31,6 +34,18 @@ export default function RoomPage() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const countdownActive = useRef(false);
+
+  // Win chips animation state
+  const [winAnimationData, setWinAnimationData] = useState<WinInfo[] | null>(null);
+  const lastSettlementRef = useRef<{ potWinners: Record<string, string[]>; pots: { id: string; amount: number }[] } | null>(null);
+  const winAnimPlayingRef = useRef(false);
+  const [winAnimPlaying, setWinAnimPlaying] = useState(false);
+  const potPositionRef = useRef<{ x: number; y: number; width: number } | null>(null);
+  const [winAnimPotPos, setWinAnimPotPos] = useState<{ x: number; y: number; width: number } | null>(null);
+  const pendingSingleWinRef = useRef<{ winner: string; winner_name: string; pot: number } | null>(null);
+
+  // Bet-to-pot animation state
+  const [betAnim, setBetAnim] = useState<{ amount: number; startPos: { x: number; y: number }; endPos: { x: number; y: number } } | null>(null);
 
   const connect = useCallback(() => {
     if (!roomId || !playerId) return;
@@ -59,6 +74,28 @@ export default function RoomPage() {
         } else if (data.type === 'event') {
           if (data.event === 'game_ended' && data.standings) {
             setStandings(data.standings as Standing[]);
+          }
+          // Capture single-winner (fold victory) events for win animation
+          // Data may be at top level or nested in phase_change
+          const winEvent = data.single_winner ? data : data.phase_change?.single_winner ? data.phase_change : null;
+          if (winEvent && winEvent.single_winner && winEvent.winner && winEvent.pot) {
+            pendingSingleWinRef.current = { winner: winEvent.winner, winner_name: winEvent.winner_name, pot: winEvent.pot };
+            // Use setTimeout to ensure room_state has been processed first
+            setTimeout(() => {
+              const ev = pendingSingleWinRef.current;
+              if (!ev) return;
+              pendingSingleWinRef.current = null;
+              const currentRoom = useStore.getState().room;
+              const p = currentRoom?.players[ev.winner];
+              if (p && ev.pot > 0 && !winAnimPlayingRef.current) {
+                winAnimPlayingRef.current = true;
+                setWinAnimPlaying(true);
+                const savedPos = potPositionRef.current || { x: window.innerWidth / 2, y: window.innerHeight / 3, width: window.innerWidth * 0.8 };
+                setWinAnimPotPos(savedPos);
+                const winInfos: WinInfo[] = [{ playerId: ev.winner, playerEmoji: p.emoji, playerName: ev.winner_name || p.name, amount: ev.pot }];
+                setTimeout(() => setWinAnimationData(winInfos), 100);
+              }
+            }, 50);
           }
           addEvent(data.event + (data.detail ? `: ${data.detail}` : ''));
         } else if (data.type === 'error') {
@@ -109,7 +146,28 @@ export default function RoomPage() {
     };
   }, [playerId, roomId, connect, navigate]);
 
-  // Detect phase changes for notification
+  // Track settlement proposal for win animation
+  useEffect(() => {
+    const proposal = room?.hand?.settlement_proposal;
+    const pots = room?.hand?.pots;
+    if (proposal && pots && pots.length > 0) {
+      lastSettlementRef.current = {
+        potWinners: { ...proposal.pot_winners },
+        pots: pots.map(p => ({ id: p.id, amount: p.amount })),
+      };
+    }
+  }, [room?.hand?.settlement_proposal, room?.hand?.pots]);
+
+  // Track pot element position continuously
+  useEffect(() => {
+    const potEl = document.querySelector('[data-pot-area]');
+    if (potEl) {
+      const rect = potEl.getBoundingClientRect();
+      potPositionRef.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, width: rect.width };
+    }
+  });
+
+  // Detect phase changes for notification + win animation
   useEffect(() => {
     const currentPhase = room?.hand?.phase ?? null;
     if (currentPhase && prevPhaseRef.current && currentPhase !== prevPhaseRef.current) {
@@ -117,14 +175,55 @@ export default function RoomPage() {
       setPhaseNotice(cn);
       setTimeout(() => setPhaseNotice(null), 2500);
     }
+
+    // Trigger win animation when leaving showdown
+    if (prevPhaseRef.current === 'showdown' && currentPhase !== 'showdown' && lastSettlementRef.current) {
+      const { potWinners, pots } = lastSettlementRef.current;
+      const winMap = new Map<string, number>();
+      for (const pot of pots) {
+        const winners = potWinners[pot.id] || [];
+        if (winners.length === 0) continue;
+        const share = Math.floor(pot.amount / winners.length);
+        for (const wid of winners) {
+          winMap.set(wid, (winMap.get(wid) || 0) + share);
+        }
+      }
+      const winInfos: WinInfo[] = [];
+      winMap.forEach((amount, pid) => {
+        const p = room?.players[pid];
+        if (p) {
+          winInfos.push({ playerId: pid, playerEmoji: p.emoji, playerName: p.name, amount });
+        }
+      });
+      if (winInfos.length > 0) {
+        // Block countdown immediately (ref for same-render, state for re-trigger)
+        winAnimPlayingRef.current = true;
+        setWinAnimPlaying(true);
+        // Save pot position before it disappears from DOM
+        const savedPos = potPositionRef.current || { x: window.innerWidth / 2, y: window.innerHeight / 3, width: window.innerWidth * 0.8 };
+        setWinAnimPotPos(savedPos);
+        // Small delay to let DOM update with new player positions
+        setTimeout(() => setWinAnimationData(winInfos), 300);
+      }
+      lastSettlementRef.current = null;
+    }
+
     prevPhaseRef.current = currentPhase;
-  }, [room?.hand?.phase, setPhaseNotice]);
+  }, [room?.hand?.phase, setPhaseNotice, room?.players]);
 
   // Auto-start countdown after hand end
   useEffect(() => {
     if (!room || !playerId) return;
     const myPlayer = room.players[playerId];
     if (!myPlayer || myPlayer.seat < 0) return;
+
+    // Block countdown while win animation is playing
+    if (winAnimPlayingRef.current) {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownActive.current = false;
+      setCountdown(null);
+      return;
+    }
 
     const isWaiting = room.status === 'waiting';
     const handEnded = isWaiting && room.hand_number > 0;
@@ -166,7 +265,7 @@ export default function RoomPage() {
       if (countdownRef.current) clearInterval(countdownRef.current);
       countdownActive.current = false;
     };
-  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, room?.players[playerId ?? '']?.chips, playerId]);
+  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, room?.players[playerId ?? '']?.chips, playerId, winAnimPlaying]);
 
   const send = useCallback((data: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -178,7 +277,22 @@ export default function RoomPage() {
   const handleStand = () => send({ type: 'stand' });
   const handleReady = () => send({ type: 'ready' });
   const handleAction = (action: string, amount?: number) => {
-    send({ type: 'action', action, amount: amount || 0 });
+    // Trigger bet-to-pot animation for betting actions
+    const betAmount = amount || 0;
+    if (betAmount > 0 && ['call', 'raise', 'all_in'].includes(action)) {
+      const chipStackEl = document.querySelector('[data-my-chip-stack]');
+      const potEl = document.querySelector('[data-pot-area]');
+      if (chipStackEl && potEl) {
+        const chipRect = chipStackEl.getBoundingClientRect();
+        const potRect = potEl.getBoundingClientRect();
+        setBetAnim({
+          amount: betAmount,
+          startPos: { x: chipRect.left + chipRect.width / 2, y: chipRect.top + chipRect.height / 2 },
+          endPos: { x: potRect.left + potRect.width / 2, y: potRect.top + potRect.height / 2 },
+        });
+      }
+    }
+    send({ type: 'action', action, amount: betAmount });
   };
   const handlePropose = (potWinners: Record<string, string[]>) => {
     send({ type: 'propose_settle', pot_winners: potWinners });
@@ -383,7 +497,7 @@ export default function RoomPage() {
             <span className="text-slate-400">
               {myPlayer.emoji} {myPlayer.name}
             </span>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               {myPlayer.total_rebuys > 0 && (
                 <span className="text-[11px] text-orange-400">补码 {myPlayer.total_rebuys * room.initial_chips}</span>
               )}
@@ -393,7 +507,9 @@ export default function RoomPage() {
               {myPlayer.current_bet > 0 && (
                 <span className="text-[11px] text-yellow-400">已下注 {myPlayer.current_bet}</span>
               )}
-              <span className="font-bold text-green-400">💰 {myPlayer.chips}</span>
+              <span className="text-[11px] text-slate-400">后手</span>
+              <span className="font-bold text-green-400 text-sm">{myPlayer.chips}</span>
+              <MyChipStack amount={myPlayer.chips} size={22} />
             </div>
           </div>
           <ActionPanel room={room} playerId={playerId} onAction={handleAction} />
@@ -423,6 +539,30 @@ export default function RoomPage() {
             </button>
           )}
         </div>
+      )}
+
+      {/* Bet-to-pot animation overlay */}
+      {betAnim && (
+        <BetToPotAnimation
+          amount={betAnim.amount}
+          startPos={betAnim.startPos}
+          endPos={betAnim.endPos}
+          onComplete={() => setBetAnim(null)}
+        />
+      )}
+
+      {/* Win chips animation overlay */}
+      {winAnimationData && (
+        <WinChipsAnimation
+          winners={winAnimationData}
+          potPosition={winAnimPotPos || { x: window.innerWidth / 2, y: window.innerHeight / 3, width: window.innerWidth * 0.8 }}
+          onComplete={() => {
+            winAnimPlayingRef.current = false;
+            setWinAnimPlaying(false);
+            setWinAnimationData(null);
+            setWinAnimPotPos(null);
+          }}
+        />
       )}
     </div>
   );

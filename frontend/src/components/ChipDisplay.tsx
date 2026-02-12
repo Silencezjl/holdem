@@ -118,8 +118,8 @@ export function PotChipDisplay({ playerBets, size = 26 }: PotChipDisplayProps) {
       {sorted.map(([denom, count]) => (
         <div key={denom} className="flex flex-col items-center">
           {/* Stack chips vertically with overlap */}
-          <div className="relative" style={{ height: size + Math.min(count - 1, 5) * 4, width: size }}>
-            {Array.from({ length: Math.min(count, 6) }).map((_, i) => (
+          <div className="relative" style={{ height: size + Math.min(count - 1, 7) * 3, width: size }}>
+            {Array.from({ length: Math.min(count, 8) }).map((_, i) => (
               <img
                 key={i}
                 src={`/poker_chip/chip_${denom}.svg`}
@@ -128,7 +128,7 @@ export function PotChipDisplay({ playerBets, size = 26 }: PotChipDisplayProps) {
                   width: size,
                   height: size,
                   position: 'absolute',
-                  bottom: i * 4,
+                  bottom: i * 3,
                   left: 0,
                   zIndex: i,
                 }}

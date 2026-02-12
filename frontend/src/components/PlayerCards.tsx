@@ -1,6 +1,8 @@
-import React from 'react';
-import { Room } from '../types';
-import ChipDisplay, { PotChipDisplay } from './ChipDisplay';
+import React, { useRef, useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Room, Player, HandState } from '../types';
+import ChipDisplay, { PotChipDisplay, decomposeChips, ChipDenom } from './ChipDisplay';
+import FlipCard from './FlipCard';
 
 interface Props {
   room: Room;
@@ -60,7 +62,7 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
     <div>
       {/* Phase display with community cards */}
       {hand && (
-        <div className="relative flex items-center gap-3 px-3.5 py-2.5 bg-gradient-to-r from-blue-900/30 to-indigo-900/20 border border-blue-700/40 rounded-xl mb-3 overflow-hidden">
+        <div className="relative flex items-center gap-3 px-3.5 py-2.5 bg-gradient-to-r from-blue-900/30 to-indigo-900/20 border border-blue-700/40 rounded-xl mb-3">
           <div className="flex items-baseline gap-2 flex-shrink-0">
             <span className="text-xl font-bold text-blue-400">阶段</span>
             <span className="text-lg font-bold text-blue-300">{PHASE_CN[hand.phase] || hand.phase}</span>
@@ -71,34 +73,50 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
                 (hand.phase === 'flop' && i <= 3) ||
                 (hand.phase === 'turn' && i <= 4) ||
                 ((hand.phase === 'river' || hand.phase === 'showdown') && i <= 5);
+              // Sequential delay: always stagger by card index regardless of phase
+              const delayMap: Record<number, number> = { 1: 0, 2: 0.15, 3: 0.3, 4: 0.45, 5: 0.6 };
               return (
-                <img
+                <FlipCard
                   key={i}
-                  src={faceUp ? `/card/${i}.svg` : '/card/back.svg'}
-                  alt={faceUp ? `card ${i}` : 'back'}
-                  className="h-10 w-auto rounded-sm drop-shadow-sm"
+                  faceUp={faceUp}
+                  frontSrc={`/card/${i}.svg`}
+                  backSrc="/card/back.svg"
+                  delay={delayMap[i]}
+                  height={48}
                 />
               );
             })}
           </div>
-          {phaseNotice && (
-            <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/95 rounded-xl animate-pulse">
-              <span className="text-white font-bold text-lg">🃏 进入 {phaseNotice}</span>
-            </div>
-          )}
+          <AnimatePresence>
+            {phaseNotice && (
+              <motion.div
+                className="absolute inset-0 flex items-center justify-start pl-2 z-20 pointer-events-none"
+                initial={{ opacity: 0, scale: 0.7 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.35, ease: 'backOut' }}
+              >
+                <span className="bg-indigo-600/90 backdrop-blur-sm text-white font-bold text-lg px-6 py-1.5 rounded-full shadow-[0_0_20px_rgba(99,102,241,0.5)] whitespace-nowrap">
+                  🃏 进入 {phaseNotice}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
-      {/* Pot display with chips */}
-      {hand && hand.pot > 0 && (
-        <div className="flex items-center gap-3 px-3.5 py-3 bg-gradient-to-r from-yellow-900/30 to-amber-900/20 border border-yellow-700/40 rounded-xl mb-[30px]">
+      {/* Pot display with chips - always visible during a hand */}
+      {hand && (
+        <div data-pot-area className="flex items-center gap-3 px-3.5 py-3 bg-gradient-to-r from-yellow-900/30 to-amber-900/20 border border-yellow-700/40 rounded-xl mb-[30px]" style={{ height: 56, overflow: 'hidden' }}>
           <div className="flex items-baseline gap-2 flex-shrink-0">
             <span className="text-xl font-bold text-yellow-400">底池</span>
             <span className="text-lg font-bold text-yellow-300">{hand.pot}</span>
           </div>
-          <div className="flex-1 flex justify-end overflow-x-auto">
-            <PotChipDisplay playerBets={seatedPlayers.map(p => p.total_bet_this_hand)} size={26} />
-          </div>
+          {hand.pot > 0 && (
+            <div className="flex-1 flex justify-end overflow-x-auto">
+              <PotChipDisplay playerBets={seatedPlayers.map(p => p.total_bet_this_hand)} size={26} />
+            </div>
+          )}
         </div>
       )}
 
@@ -107,77 +125,206 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
 
       {/* Player rows - horizontal bars */}
       <div className="space-y-3">
-        {seatedPlayers.map(p => {
-          const isMe = p.id === playerId;
-          const isCurrentTurn = hand?.current_player_id === p.id;
-          const isFolded = p.status === 'folded';
-          const isAllIn = p.status === 'all_in';
-          const role = getRoleLabel(room, p.seat);
-          const actionInfo = formatAction(p.last_action);
-
-          return (
-            <div
-              key={p.id}
-              className={`relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all ${
-                isCurrentTurn
-                  ? 'border-yellow-400 bg-yellow-900/20 shadow-md shadow-yellow-900/30'
-                  : isFolded
-                  ? 'border-slate-700/50 bg-slate-800/30 opacity-50'
-                  : isMe
-                  ? 'border-blue-500/60 bg-slate-800/80'
-                  : 'border-slate-700/50 bg-slate-800/60'
-              }`}
-            >
-              {/* Emoji + name + chips (left) */}
-              <div className="relative flex-shrink-0">
-                <span className="text-2xl">{p.emoji}</span>
-                <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-800 ${p.is_connected ? 'bg-green-400' : 'bg-red-500'}`} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-slate-500">#{p.seat + 1}</span>
-                  {role && (
-                    <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${getRoleBadgeColor(role)}`}>
-                      {role}
-                    </span>
-                  )}
-                  <span className="text-sm font-medium truncate">{p.name}</span>
-                  {isMe && <span className="text-[10px] text-blue-400">(我)</span>}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-green-400 font-semibold">💰 {p.chips}</span>
-                  {isCurrentTurn && !isFolded && (
-                    <span className="text-[10px] font-bold text-yellow-400 animate-pulse">⏳ 行动中</span>
-                  )}
-                  {actionInfo && (
-                    <span className={`text-[11px] font-bold ${actionInfo.color}`}>{actionInfo.text}</span>
-                  )}
-                  {!actionInfo && isAllIn && (
-                    <span className="text-[11px] font-bold text-red-500">All-In</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Right side: chip SVG display for current bet */}
-              <div className="flex-shrink-0">
-                {hand && p.current_bet > 0 ? (
-                  <div className="flex items-center gap-1">
-                    <ChipDisplay amount={p.current_bet} size={22} maxChips={6} />
-                    <span className="text-xs font-bold text-orange-400 ml-0.5">{p.current_bet}</span>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Status overlays */}
-              {isFolded && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 rounded-xl">
-                  <span className="text-xs font-bold text-red-400/80">FOLD</span>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {seatedPlayers.map(p => (
+          <PlayerRow
+            key={p.id}
+            player={p}
+            room={room}
+            playerId={playerId}
+            hand={hand}
+          />
+        ))}
       </div>
+    </div>
+  );
+}
+
+interface PlayerRowProps {
+  player: Player;
+  room: Room;
+  playerId: string;
+  hand: HandState | null;
+}
+
+function PlayerRow({ player: p, room, playerId, hand }: PlayerRowProps) {
+  const isMe = p.id === playerId;
+  const isCurrentTurn = hand?.current_player_id === p.id;
+  const isFolded = p.status === 'folded';
+  const isAllIn = p.status === 'all_in';
+  const role = getRoleLabel(room, p.seat);
+  const actionInfo = formatAction(p.last_action);
+
+  // All-in push animation state
+  const prevActionRef = useRef<string | null>(null);
+  const [showAllInPush, setShowAllInPush] = useState(false);
+
+  useEffect(() => {
+    const prev = prevActionRef.current;
+    const curr = p.last_action;
+    if (curr && curr.startsWith('all_in:') && (!prev || !prev.startsWith('all_in:'))) {
+      setShowAllInPush(true);
+      const timer = setTimeout(() => setShowAllInPush(false), 3200);
+      return () => clearTimeout(timer);
+    }
+    prevActionRef.current = curr;
+  }, [p.last_action]);
+
+  // Generate chips for all-in animation
+  const allInChips = React.useMemo(() => {
+    if (!showAllInPush) return [];
+    const amount = p.last_action ? parseInt(p.last_action.split(':')[1]) || 0 : 0;
+    const chips = decomposeChips(amount > 0 ? amount : p.current_bet);
+    const items: { denom: ChipDenom; key: string; delay: number; offsetY: number }[] = [];
+    let idx = 0;
+    chips.forEach(({ denom, count }) => {
+      for (let i = 0; i < Math.min(count, 3) && items.length < 12; i++) {
+        items.push({
+          denom,
+          key: `${denom}-${i}`,
+          delay: idx * 0.09,
+          offsetY: (Math.random() - 0.5) * 24,
+        });
+        idx++;
+      }
+    });
+    return items;
+  }, [showAllInPush, p.last_action, p.current_bet]);
+
+  return (
+    <div
+      data-player-id={p.id}
+      className={`relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all overflow-hidden ${
+        isCurrentTurn
+          ? 'border-yellow-400 bg-yellow-900/20 shadow-md shadow-yellow-900/30'
+          : isFolded
+          ? 'border-slate-700/50 bg-slate-800/30 opacity-50'
+          : isMe
+          ? 'border-blue-500/60 bg-slate-800/80'
+          : 'border-slate-700/50 bg-slate-800/60'
+      }`}
+    >
+      {/* Emoji + name + chips (left) */}
+      <div className="relative flex-shrink-0">
+        <span className="text-2xl">{p.emoji}</span>
+        <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-800 ${p.is_connected ? 'bg-green-400' : 'bg-red-500'}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-slate-500">#{p.seat + 1}</span>
+          {role && (
+            <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${getRoleBadgeColor(role)}`}>
+              {role}
+            </span>
+          )}
+          <span className="text-sm font-medium truncate">{p.name}</span>
+          {isMe && <span className="text-[10px] text-blue-400">(我)</span>}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-xs text-green-400 font-semibold">💰 {p.chips}</span>
+          {isCurrentTurn && !isFolded && (
+            <span className="text-[10px] font-bold text-yellow-400 animate-pulse">⏳ 行动中</span>
+          )}
+          {actionInfo && (
+            <span className={`text-[11px] font-bold ${actionInfo.color}`}>{actionInfo.text}</span>
+          )}
+          {!actionInfo && isAllIn && (
+            <span className="text-[11px] font-bold text-red-500">All-In</span>
+          )}
+        </div>
+      </div>
+
+      {/* Right side: chip SVG display for current bet (hidden during all-in animation) */}
+      <div className="flex-shrink-0">
+        {hand && p.current_bet > 0 && !showAllInPush ? (
+          <div className="flex items-center gap-1">
+            <ChipDisplay amount={p.current_bet} size={22} maxChips={6} />
+            <span className="text-xs font-bold text-orange-400 ml-0.5">{p.current_bet}</span>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Status overlays */}
+      {isFolded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 rounded-xl">
+          <span className="text-xs font-bold text-red-400/80">FOLD</span>
+        </div>
+      )}
+
+      {/* All-in push animation - glow & text inside card */}
+      <AnimatePresence>
+        {showAllInPush && (
+          <motion.div
+            className="absolute inset-0 pointer-events-none z-10"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            {/* Red glow background flash */}
+            <motion.div
+              className="absolute inset-0 bg-red-600/20 rounded-xl"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0.6, 0.3, 0] }}
+              transition={{ duration: 2.4 }}
+            />
+            {/* ALL IN text flash */}
+            <motion.div
+              className="absolute inset-0 flex items-center justify-center"
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: [0, 1, 1, 0], scale: [0.5, 1.2, 1, 0.8] }}
+              transition={{ duration: 3.0, delay: 0.3 }}
+            >
+              <span className="text-red-500 font-black text-xl tracking-wider drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]">
+                ALL IN
+              </span>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* All-in push chips - fixed overlay to avoid overflow clipping */}
+      <AnimatePresence>
+        {showAllInPush && allInChips.length > 0 && (() => {
+          const el = document.querySelector(`[data-player-id="${p.id}"]`);
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return (
+            <motion.div
+              className="fixed pointer-events-none z-[200]"
+              style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }}
+              initial={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              {allInChips.map((chip) => (
+                <motion.img
+                  key={chip.key}
+                  src={`/poker_chip/chip_${chip.denom}.svg`}
+                  alt={`${chip.denom}`}
+                  className="absolute w-8 h-8 drop-shadow-lg"
+                  style={{ top: '50%' }}
+                  initial={{
+                    right: 12,
+                    y: chip.offsetY - 12,
+                    opacity: 1,
+                    scale: 0.8,
+                  }}
+                  animate={{
+                    right: [12, 100, 240],
+                    y: chip.offsetY - 12,
+                    opacity: [0, 1, 1, 0],
+                    scale: [0.8, 1.1, 0.9],
+                  }}
+                  transition={{
+                    duration: 2.4,
+                    delay: chip.delay,
+                    ease: [0.4, 0, 0.2, 1],
+                  }}
+                />
+              ))}
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }
