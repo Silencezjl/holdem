@@ -281,14 +281,14 @@ export default function RoomPage() {
     const betAmount = amount || 0;
     if (betAmount > 0 && ['call', 'raise', 'all_in'].includes(action)) {
       const chipStackEl = document.querySelector('[data-my-chip-stack]');
-      const potEl = document.querySelector('[data-pot-area]');
-      if (chipStackEl && potEl) {
+      const potChipsEl = document.querySelector('[data-pot-chips]') || document.querySelector('[data-pot-area]');
+      if (chipStackEl && potChipsEl) {
         const chipRect = chipStackEl.getBoundingClientRect();
-        const potRect = potEl.getBoundingClientRect();
+        const potRect = potChipsEl.getBoundingClientRect();
         setBetAnim({
           amount: betAmount,
           startPos: { x: chipRect.left + chipRect.width / 2, y: chipRect.top + chipRect.height / 2 },
-          endPos: { x: potRect.left + potRect.width / 2, y: potRect.top + potRect.height / 2 },
+          endPos: { x: potRect.left + potRect.width * 0.8, y: potRect.top + potRect.height / 2 },
         });
       }
     }

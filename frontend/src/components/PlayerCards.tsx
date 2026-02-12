@@ -113,7 +113,7 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
             <span className="text-lg font-bold text-yellow-300">{hand.pot}</span>
           </div>
           {hand.pot > 0 && (
-            <div className="flex-1 flex justify-end overflow-x-auto">
+            <div data-pot-chips className="flex-1 flex justify-end overflow-x-auto">
               <PotChipDisplay playerBets={seatedPlayers.map(p => p.total_bet_this_hand)} size={26} />
             </div>
           )}
