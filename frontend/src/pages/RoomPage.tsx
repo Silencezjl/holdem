@@ -358,7 +358,7 @@ export default function RoomPage() {
             {/* Playing state */}
             <PlayerCards room={room} playerId={playerId} phaseNotice={phaseNotice} />
 
-            {isShowdown && (
+            {isShowdown && myPlayer?.status !== 'folded' ? (
               <SettlementPanel
                 room={room}
                 playerId={playerId}
@@ -366,7 +366,11 @@ export default function RoomPage() {
                 onConfirm={handleConfirm}
                 onReject={handleReject}
               />
-            )}
+            ) : isShowdown && myPlayer?.status === 'folded' ? (
+              <div className="bg-slate-800 rounded-xl p-4 text-center">
+                <p className="text-slate-400 text-sm">等待其他玩家完成结算...</p>
+              </div>
+            ) : null}
           </>
         )}
       </div>
