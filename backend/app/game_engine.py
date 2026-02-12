@@ -86,22 +86,22 @@ def start_hand(room: Room) -> Room:
         sb_seat = find_next_seat(seat_indices, dealer_seat)
         bb_seat = find_next_seat(seat_indices, sb_seat)
     
-    hand = HandState(
-        phase=HandPhase.PREFLOP,
-        dealer_seat=dealer_seat,
-        sb_seat=sb_seat,
-        bb_seat=bb_seat,
-        current_bet=room.bb_amount,
-        pot=0,
-    )
-    room.hand = hand
-    
     # Post blinds
     sb_player = room.players[room.seats[sb_seat]]
     bb_player = room.players[room.seats[bb_seat]]
     
     sb_actual = min(sb_player.chips, room.sb_amount)
     bb_actual = min(bb_player.chips, room.bb_amount)
+    
+    hand = HandState(
+        phase=HandPhase.PREFLOP,
+        dealer_seat=dealer_seat,
+        sb_seat=sb_seat,
+        bb_seat=bb_seat,
+        current_bet=bb_actual,
+        pot=0,
+    )
+    room.hand = hand
     
     sb_player.chips -= sb_actual
     sb_player.current_bet = sb_actual
@@ -539,10 +539,12 @@ def execute_settlement(room: Room) -> tuple[Room, dict]:
     
     for pot in hand.pots:
         winners = pot_winners.get(pot.id, [])
-        if not winners:
-            continue
+        valid_winners = [w for w in winners if w in pot.eligible_players] if winners else []
         
-        valid_winners = [w for w in winners if w in pot.eligible_players]
+        # Fallback: if no valid winners specified, distribute to all eligible players
+        if not valid_winners:
+            valid_winners = pot.eligible_players
+        
         if not valid_winners:
             continue
         

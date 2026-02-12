@@ -86,7 +86,7 @@ export default function RoomPage() {
 
     wsRef.current = socket;
     setWs(socket);
-  }, [roomId, playerId, setRoom, setWs, setConnected, setLatency, addEvent, setError, setStandings]);
+  }, [roomId, playerId, setRoom, setWs, setConnected, setLatency, addEvent, setError, setStandings, setRoomId, navigate]);
 
   const handleLeave = useCallback(async () => {
     if (roomId && playerId) {

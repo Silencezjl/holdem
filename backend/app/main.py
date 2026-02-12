@@ -178,11 +178,12 @@ async def get_rooms():
 
 @app.post("/api/rooms/join")
 async def join_room(req: JoinRoomRequest):
+    player_id = req.device_id or generate_player_id()
+
+    # Quick check before locking
     room = await get_room(req.room_id)
     if not room:
         raise HTTPException(404, "Room not found")
-
-    player_id = req.device_id or generate_player_id()
 
     # If player already in this room (reconnection), just return
     if player_id in room.players:
@@ -191,17 +192,23 @@ async def join_room(req: JoinRoomRequest):
     # Remove player from any other rooms first
     await remove_player_from_all_rooms(player_id)
 
-    player = Player(
-        id=player_id,
-        name=req.player_name,
-        emoji=req.player_emoji,
-        chips=room.initial_chips,
-    )
-    room.players[player_id] = player
-    await save_room(room)
+    async with get_room_lock(req.room_id):
+        # Reload room state inside lock
+        room = await get_room(req.room_id)
+        if not room:
+            raise HTTPException(404, "Room not found")
+
+        player = Player(
+            id=player_id,
+            name=req.player_name,
+            emoji=req.player_emoji,
+            chips=room.initial_chips,
+        )
+        room.players[player_id] = player
+        await save_room(room)
 
     # Broadcast updated room state
-    await manager.broadcast(room.id, room_to_broadcast(room))
+    await manager.broadcast(req.room_id, room_to_broadcast(room))
 
     return {"room_id": room.id, "player_id": player_id}
 
