@@ -56,6 +56,42 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
     .filter(p => p.seat >= 0)
     .sort((a, b) => a.seat - b.seat);
 
+  // Track which folded players should be hidden (after phase advances past their fold)
+  const [hiddenFoldedIds, setHiddenFoldedIds] = useState<Set<string>>(new Set());
+  const prevPhaseRef = useRef<string | null>(null);
+  const prevHandNumberRef = useRef<number>(room.hand_number);
+
+  useEffect(() => {
+    const currentPhase = hand?.phase ?? null;
+    const currentHandNumber = room.hand_number;
+
+    // New hand started: restore all players
+    if (currentHandNumber !== prevHandNumberRef.current) {
+      setHiddenFoldedIds(new Set());
+      prevHandNumberRef.current = currentHandNumber;
+      prevPhaseRef.current = currentPhase;
+      return;
+    }
+
+    // Phase advanced: hide players who are currently folded
+    if (
+      currentPhase &&
+      prevPhaseRef.current &&
+      currentPhase !== prevPhaseRef.current &&
+      currentPhase !== 'preflop'
+    ) {
+      setHiddenFoldedIds(prev => {
+        const next = new Set(prev);
+        seatedPlayers.forEach(p => {
+          if (p.status === 'folded') next.add(p.id);
+        });
+        return next;
+      });
+    }
+
+    prevPhaseRef.current = currentPhase;
+  }, [hand?.phase, room.hand_number]);
+
   if (seatedPlayers.length === 0) return null;
 
   return (
@@ -124,16 +160,27 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
       <div className="text-sm font-semibold text-slate-400 mb-2">玩家列表</div>
 
       {/* Player rows - horizontal bars */}
-      <div className="space-y-3">
-        {seatedPlayers.map(p => (
-          <PlayerRow
-            key={p.id}
-            player={p}
-            room={room}
-            playerId={playerId}
-            hand={hand}
-          />
-        ))}
+      <div className="space-y-3" style={{ overflow: 'hidden' }}>
+        <AnimatePresence initial={false}>
+          {seatedPlayers
+            .filter(p => !hiddenFoldedIds.has(p.id))
+            .map(p => (
+              <motion.div
+                key={p.id}
+                layout
+                initial={false}
+                exit={{ opacity: 0, x: '-110%' }}
+                transition={{ duration: 0.35, ease: 'easeIn' }}
+              >
+                <PlayerRow
+                  player={p}
+                  room={room}
+                  playerId={playerId}
+                  hand={hand}
+                />
+              </motion.div>
+            ))}
+        </AnimatePresence>
       </div>
     </div>
   );

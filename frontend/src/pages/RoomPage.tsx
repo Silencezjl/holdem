@@ -11,6 +11,7 @@ import WinChipsAnimation, { WinInfo } from '../components/WinChipsAnimation';
 import MyChipStack from '../components/MyChipStack';
 import BetToPotAnimation from '../components/BetToPotAnimation';
 import { useWakeLock } from '../hooks/useWakeLock';
+import { usePhaseSound } from '../hooks/usePhaseSound';
 
 const PHASE_CN: Record<string, string> = {
   hand_start: '开始', preflop: '翻牌前', flop: '翻牌',
@@ -27,6 +28,7 @@ export default function RoomPage() {
   } = useStore();
   const roomId = urlRoomId || null;
   useWakeLock();
+  const { playPhaseSound } = usePhaseSound();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
   const pingTimer = useRef<NodeJS.Timeout | null>(null);
@@ -174,6 +176,7 @@ export default function RoomPage() {
       const cn = PHASE_CN[currentPhase] || currentPhase;
       setPhaseNotice(cn);
       setTimeout(() => setPhaseNotice(null), 2500);
+      playPhaseSound(currentPhase);
     }
 
     // Trigger win animation when leaving showdown

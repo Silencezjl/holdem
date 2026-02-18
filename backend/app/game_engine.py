@@ -8,15 +8,20 @@ from .models import (
 
 
 def get_seated_players(room: Room) -> list[Player]:
-    """Return players sorted by seat index who are seated."""
+    """Return players sorted by seat index who are seated (including disconnected)."""
     seated = []
     for seat_idx in sorted(room.seats.keys()):
         pid = room.seats[seat_idx]
         if pid and pid in room.players:
             p = room.players[pid]
-            if p.seat >= 0 and p.is_connected:
+            if p.seat >= 0:
                 seated.append(p)
     return seated
+
+
+def get_connected_seated_players(room: Room) -> list[Player]:
+    """Return seated players who are currently connected."""
+    return [p for p in get_seated_players(room) if p.is_connected]
 
 
 def get_active_players(room: Room) -> list[Player]:
@@ -58,7 +63,7 @@ def find_next_seat(seat_indices: list[int], after_seat: int) -> int:
 
 def start_hand(room: Room) -> Room:
     """Initialize a new hand."""
-    seated = get_seated_players(room)
+    seated = get_connected_seated_players(room)
     if len(seated) < 2:
         return room
     
