@@ -29,6 +29,8 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
     const items: { label: string; amount: number }[] = [];
     const twoBB = snapToChip(bb * 2 + currentBet);
     if (twoBB > currentBet && twoBB <= myChips + myBet) items.push({ label: '2BB', amount: twoBB });
+    const threeBB = snapToChip(bb * 3 + currentBet);
+    if (threeBB > currentBet && threeBB <= myChips + myBet) items.push({ label: '3BB', amount: threeBB });
     const halfPot = snapToChip(Math.floor(pot / 2) + currentBet);
     if (halfPot > currentBet && halfPot <= myChips + myBet) items.push({ label: '½ Pot', amount: halfPot });
     const fullPot = snapToChip(pot + currentBet);
@@ -79,9 +81,10 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
   }
 
   if (showRaise) {
-    const effectiveRaise = raiseAmount || minRaise;
+    const effectiveRaise = raiseAmount;
     const addChip = (d: number) => {
-      const next = effectiveRaise + d;
+      const base = effectiveRaise === 0 ? minRaise : effectiveRaise;
+      const next = base + d;
       if (next <= maxRaise) setRaiseAmount(next);
     };
     const removeChip = (d: number) => {
@@ -100,14 +103,21 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
 
         {/* Current amount display */}
         <div className="text-center py-1">
-          <span className="text-2xl font-bold text-white">{effectiveRaise}</span>
-          <span className="text-xs text-slate-400 ml-2">(加注 {effectiveRaise - currentBet})</span>
+          {effectiveRaise === 0 ? (
+            <span className="text-base text-slate-400">请选择加注金额</span>
+          ) : (
+            <>
+              <span className="text-2xl font-bold text-white">{effectiveRaise}</span>
+              <span className="text-xs text-slate-400 ml-2">(加注 {effectiveRaise - currentBet})</span>
+            </>
+          )}
         </div>
 
         {/* Chip buttons to add */}
         <div className="flex justify-center gap-1.5">
           {CHIP_DENOMS.map(d => {
-            const canAdd = effectiveRaise + d <= maxRaise;
+            const base = effectiveRaise === 0 ? minRaise : effectiveRaise;
+            const canAdd = base + d <= maxRaise;
             return (
               <button
                 key={d}
@@ -122,6 +132,7 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
                 />
                 <span className="text-[9px] text-green-400 font-bold mt-0.5">+{d}</span>
               </button>
+
             );
           })}
         </div>
@@ -173,9 +184,10 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
             setShowRaise(false);
             setRaiseAmount(0);
           }}
-          className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-white font-bold transition"
+          disabled={effectiveRaise === 0}
+          className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-white font-bold transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          确认加注 → {effectiveRaise}
+          {effectiveRaise === 0 ? '请先选择加注金额' : `确认加注 → ${effectiveRaise}`}
         </button>
       </div>
     );
@@ -210,7 +222,7 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
 
         <button
           onClick={() => {
-            setRaiseAmount(minRaise);
+            setRaiseAmount(0);
             setShowRaise(true);
           }}
           disabled={myChips <= callAmount}

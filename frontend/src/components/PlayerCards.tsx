@@ -61,6 +61,32 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
   const prevPhaseRef = useRef<string | null>(null);
   const prevHandNumberRef = useRef<number>(room.hand_number);
 
+  // Track last acted player and scroll container
+  const lastActedIdRef = useRef<string | null>(null);
+  const prevCurrentPlayerRef = useRef<string | null>(null);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+
+  // When current player changes, record the previous one as lastActed
+  useEffect(() => {
+    const currentId = hand?.current_player_id ?? null;
+    if (prevCurrentPlayerRef.current && prevCurrentPlayerRef.current !== currentId) {
+      lastActedIdRef.current = prevCurrentPlayerRef.current;
+    }
+    prevCurrentPlayerRef.current = currentId;
+    // Scroll list to top so current player (first) is visible
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
+  }, [hand?.current_player_id]);
+
+  // Reset on new hand
+  useEffect(() => {
+    if (room.hand_number !== prevHandNumberRef.current) {
+      lastActedIdRef.current = null;
+      prevCurrentPlayerRef.current = null;
+    }
+  }, [room.hand_number]);
+
   useEffect(() => {
     const currentPhase = hand?.phase ?? null;
     const currentHandNumber = room.hand_number;
@@ -91,6 +117,28 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
 
     prevPhaseRef.current = currentPhase;
   }, [hand?.phase, room.hand_number]);
+
+  // Build ordered player list: current actor first, last acted last, rest by action_order
+  const orderedPlayers = (() => {
+    const visible = seatedPlayers.filter(p => !hiddenFoldedIds.has(p.id));
+    const currentId = hand?.current_player_id ?? null;
+    const lastId = lastActedIdRef.current;
+    const actionOrder = hand?.action_order ?? [];
+
+    // Sort by action_order index for middle players
+    const orderIndex = (id: string) => {
+      const idx = actionOrder.indexOf(id);
+      return idx >= 0 ? idx : 999;
+    };
+
+    const current = visible.filter(p => p.id === currentId);
+    const lastActed = visible.filter(p => p.id === lastId && p.id !== currentId);
+    const rest = visible
+      .filter(p => p.id !== currentId && p.id !== lastId)
+      .sort((a, b) => orderIndex(a.id) - orderIndex(b.id));
+
+    return [...current, ...rest, ...lastActed];
+  })();
 
   if (seatedPlayers.length === 0) return null;
 
@@ -159,27 +207,29 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
       {/* Player list header */}
       <div className="text-sm font-semibold text-slate-400 mb-2">玩家列表</div>
 
-      {/* Player rows - horizontal bars */}
-      <div className="space-y-3" style={{ overflow: 'hidden' }}>
+      {/* Player rows - fixed height 4 cards, scrollable */}
+      <div
+        ref={listScrollRef}
+        className="space-y-3 overflow-y-auto pr-0.5"
+        style={{ maxHeight: 'calc(4 * 60px + 3 * 12px)', scrollbarWidth: 'none' }}
+      >
         <AnimatePresence initial={false}>
-          {seatedPlayers
-            .filter(p => !hiddenFoldedIds.has(p.id))
-            .map(p => (
-              <motion.div
-                key={p.id}
-                layout
-                initial={false}
-                exit={{ opacity: 0, x: '-110%' }}
-                transition={{ duration: 0.35, ease: 'easeIn' }}
-              >
-                <PlayerRow
-                  player={p}
-                  room={room}
-                  playerId={playerId}
-                  hand={hand}
-                />
-              </motion.div>
-            ))}
+          {orderedPlayers.map(p => (
+            <motion.div
+              key={p.id}
+              layout
+              initial={false}
+              exit={{ opacity: 0, x: '-110%' }}
+              transition={{ duration: 0.35, ease: 'easeIn' }}
+            >
+              <PlayerRow
+                player={p}
+                room={room}
+                playerId={playerId}
+                hand={hand}
+              />
+            </motion.div>
+          ))}
         </AnimatePresence>
       </div>
     </div>
