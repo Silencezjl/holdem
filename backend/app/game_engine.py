@@ -553,11 +553,16 @@ def execute_settlement(room: Room) -> tuple[Room, dict]:
         if not valid_winners:
             continue
         
-        share = pot.amount // len(valid_winners)
-        remainder = pot.amount % len(valid_winners)
+        min_chip = room.sb_amount  # minimum chip denomination
+        n = len(valid_winners)
+        # Round each share down to a multiple of min_chip
+        share_raw = pot.amount // n
+        share = (share_raw // min_chip) * min_chip
+        # Remaining chips (in min_chip units) distributed one unit each to the first k winners
+        leftover_units = (pot.amount - share * n) // min_chip
         
         for i, wid in enumerate(valid_winners):
-            award = share + (1 if i < remainder else 0)
+            award = share + (min_chip if i < leftover_units else 0)
             room.players[wid].chips += award
             settlements.append({
                 "pot_id": pot.id,
