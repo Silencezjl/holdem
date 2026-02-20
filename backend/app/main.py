@@ -338,6 +338,12 @@ async def websocket_endpoint(ws: WebSocket, room_id: str, player_id: str):
                     room.last_all_disconnected_at = time.time()
                 await save_room(room)
                 await manager.broadcast(room_id, room_to_broadcast(room))
+                await manager.broadcast(room_id, {
+                    "type": "event",
+                    "event": "player_disconnected",
+                    "detail": f"{room.players[player_id].name} 已掉线",
+                    "player_id": player_id
+                })
 
 
 # ─── Message Handlers ───

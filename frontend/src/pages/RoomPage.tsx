@@ -33,6 +33,7 @@ export default function RoomPage() {
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
   const pingTimer = useRef<NodeJS.Timeout | null>(null);
   const prevPhaseRef = useRef<string | null>(null);
+  const prevConnectionsRef = useRef<Record<string, boolean>>({});
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const countdownActive = useRef(false);
@@ -177,6 +178,21 @@ export default function RoomPage() {
       setPhaseNotice(cn);
       setTimeout(() => setPhaseNotice(null), 2500);
       playPhaseSound(currentPhase);
+    }
+
+    // Detect player connection changes
+    if (room?.players) {
+      Object.values(room.players).forEach(p => {
+        const wasConnected = prevConnectionsRef.current[p.id];
+        if (wasConnected !== undefined && wasConnected !== p.is_connected) {
+          if (!p.is_connected) {
+            addEvent(`${p.name} 已掉线`);
+          } else {
+            addEvent(`${p.name} 已重新连接`);
+          }
+        }
+        prevConnectionsRef.current[p.id] = p.is_connected;
+      });
     }
 
     // Trigger win animation when leaving showdown
@@ -456,10 +472,22 @@ export default function RoomPage() {
                   <p className="text-slate-400 text-sm">下一手自动开始</p>
                   <p className="text-4xl font-bold text-white mt-1">{countdown}</p>
                 </div>
-              ) : myPlayer?.ready ? (
-                <p className="text-green-400 text-sm">✓ 等待其他玩家...</p>
               ) : (
-                <p className="text-slate-400 text-sm">准备中...</p>
+                <div className="space-y-1">
+                  {myPlayer?.ready ? (
+                    <p className="text-green-400 text-sm">✓ 已准备，等待其他玩家...</p>
+                  ) : (
+                    <p className="text-slate-400 text-sm">请点击准备</p>
+                  )}
+                  {Object.values(room.players).filter(p => p.seat >= 0 && !p.ready).length > 0 && (
+                    <p className="text-[11px] text-slate-500">
+                      等待: {Object.values(room.players)
+                        .filter(p => p.seat >= 0 && !p.ready)
+                        .map(p => p.name)
+                        .join(', ')}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 

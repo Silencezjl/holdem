@@ -56,41 +56,14 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
     .filter(p => p.seat >= 0)
     .sort((a, b) => a.seat - b.seat);
 
-  // Track which folded players should be hidden (after phase advances past their fold)
-  const [hiddenFoldedIds, setHiddenFoldedIds] = useState<Set<string>>(new Set());
-  const prevPhaseRef = useRef<string | null>(null);
-  const prevHandNumberRef = useRef<number>(room.hand_number);
-
-  useEffect(() => {
-    const currentPhase = hand?.phase ?? null;
-    const currentHandNumber = room.hand_number;
-
-    // New hand started: restore all players
-    if (currentHandNumber !== prevHandNumberRef.current) {
-      setHiddenFoldedIds(new Set());
-      prevHandNumberRef.current = currentHandNumber;
-      prevPhaseRef.current = currentPhase;
-      return;
-    }
-
-    // Phase advanced: hide players who are currently folded
-    if (
-      currentPhase &&
-      prevPhaseRef.current &&
-      currentPhase !== prevPhaseRef.current &&
-      currentPhase !== 'preflop'
-    ) {
-      setHiddenFoldedIds(prev => {
-        const next = new Set(prev);
-        seatedPlayers.forEach(p => {
-          if (p.status === 'folded') next.add(p.id);
-        });
-        return next;
-      });
-    }
-
-    prevPhaseRef.current = currentPhase;
-  }, [hand?.phase, room.hand_number]);
+  // Build ordered player list (without folded players for current hand)
+  const orderedPlayers = (() => {
+    const visible = seatedPlayers.filter(p => p.status !== 'folded');
+    
+    // Sort logic here if needed (e.g., current player first, then action order)
+    // For now, keep original seat order
+    return visible;
+  })();
 
   if (seatedPlayers.length === 0) return null;
 
@@ -157,20 +130,22 @@ export default function PlayerCards({ room, playerId, phaseNotice }: Props) {
       )}
 
       {/* Player list header */}
-      <div className="text-sm font-semibold text-slate-400 mb-2">玩家列表</div>
+      <div className="text-sm font-semibold text-slate-400 mb-2 flex justify-between">
+        <span>玩家列表</span>
+        <span className="text-xs">{orderedPlayers.length} 人在局</span>
+      </div>
 
-      {/* Player rows - horizontal bars */}
-      <div className="space-y-3" style={{ overflow: 'hidden' }}>
+      {/* Player rows - grid layout for more players */}
+      <div className="grid grid-cols-2 gap-2" style={{ overflow: 'hidden' }}>
         <AnimatePresence initial={false}>
-          {seatedPlayers
-            .filter(p => !hiddenFoldedIds.has(p.id))
+          {orderedPlayers
             .map(p => (
               <motion.div
                 key={p.id}
                 layout
                 initial={false}
-                exit={{ opacity: 0, x: '-110%' }}
-                transition={{ duration: 0.35, ease: 'easeIn' }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
               >
                 <PlayerRow
                   player={p}
@@ -240,93 +215,52 @@ function PlayerRow({ player: p, room, playerId, hand }: PlayerRowProps) {
   return (
     <div
       data-player-id={p.id}
-      className={`relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all overflow-hidden ${
+      className={`relative flex flex-col gap-1.5 px-2.5 py-2 rounded-xl border transition-all overflow-hidden ${
         isCurrentTurn
           ? 'border-yellow-400 bg-yellow-900/20 shadow-md shadow-yellow-900/30'
-          : isFolded
-          ? 'border-slate-700/50 bg-slate-800/30 opacity-50'
           : isMe
           ? 'border-blue-500/60 bg-slate-800/80'
           : 'border-slate-700/50 bg-slate-800/60'
       }`}
     >
-      {/* Emoji + name + chips (left) */}
-      <div className="relative flex-shrink-0">
-        <span className="text-2xl">{p.emoji}</span>
-        <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-800 ${p.is_connected ? 'bg-green-400' : 'bg-red-500'}`} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-500">#{p.seat + 1}</span>
+      {/* Top row: Emoji + Name + Role */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <div className="relative flex-shrink-0">
+          <span className="text-xl">{p.emoji}</span>
+          <span className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full border border-slate-800 ${p.is_connected ? 'bg-green-400' : 'bg-red-500'}`} />
+        </div>
+        <div className="flex-1 min-w-0 flex flex-col justify-center">
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-slate-500">#{p.seat + 1}</span>
+            <span className="text-xs font-medium truncate">{p.name}</span>
+            {isMe && <span className="text-[9px] text-blue-400 flex-shrink-0">(我)</span>}
+          </div>
           {role && (
-            <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${getRoleBadgeColor(role)}`}>
+            <span className={`text-[9px] font-bold px-1 py-0.5 rounded w-max mt-0.5 ${getRoleBadgeColor(role)}`}>
               {role}
             </span>
           )}
-          <span className="text-sm font-medium truncate">{p.name}</span>
-          {isMe && <span className="text-[10px] text-blue-400">(我)</span>}
-        </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          <span className="text-xs text-green-400 font-semibold">💰 {p.chips}</span>
-          {isCurrentTurn && !isFolded && (
-            <span className="text-[10px] font-bold text-yellow-400 animate-pulse">⏳ 行动中</span>
-          )}
-          {actionInfo && (
-            <span className={`text-[11px] font-bold ${actionInfo.color}`}>{actionInfo.text}</span>
-          )}
-          {!actionInfo && isAllIn && (
-            <span className="text-[11px] font-bold text-red-500">All-In</span>
-          )}
         </div>
       </div>
 
-      {/* Right side: chip SVG display for current bet (hidden during all-in animation) */}
-      <div className="flex-shrink-0">
-        {hand && p.current_bet > 0 && !showAllInPush ? (
-          <div className="flex items-center gap-1">
-            <ChipDisplay amount={p.current_bet} size={22} maxChips={6} />
-            <span className="text-xs font-bold text-orange-400 ml-0.5">{p.current_bet}</span>
-          </div>
-        ) : null}
-      </div>
-
-      {/* Status overlays */}
-      {isFolded && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 rounded-xl">
-          <span className="text-xs font-bold text-red-400/80">FOLD</span>
+      {/* Bottom row: Chips and Action/Bet info */}
+      <div className="flex items-center justify-between mt-0.5">
+        <span className="text-[11px] text-green-400 font-semibold">💰 {p.chips}</span>
+        
+        <div className="flex items-center gap-1.5">
+          {isCurrentTurn ? (
+            <span className="text-[10px] font-bold text-yellow-400 animate-pulse">⏳ 行动</span>
+          ) : actionInfo ? (
+            <span className={`text-[10px] font-bold ${actionInfo.color}`}>{actionInfo.text}</span>
+          ) : isAllIn ? (
+            <span className="text-[10px] font-bold text-red-500">All-In</span>
+          ) : hand && p.current_bet > 0 && !showAllInPush ? (
+            <div className="flex items-center gap-0.5">
+              <span className="text-[10px] font-bold text-orange-400">{p.current_bet}</span>
+            </div>
+          ) : null}
         </div>
-      )}
-
-      {/* All-in push animation - glow & text inside card */}
-      <AnimatePresence>
-        {showAllInPush && (
-          <motion.div
-            className="absolute inset-0 pointer-events-none z-10"
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            {/* Red glow background flash */}
-            <motion.div
-              className="absolute inset-0 bg-red-600/20 rounded-xl"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: [0, 0.6, 0.3, 0] }}
-              transition={{ duration: 2.4 }}
-            />
-            {/* ALL IN text flash */}
-            <motion.div
-              className="absolute inset-0 flex items-center justify-center"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: [0, 1, 1, 0], scale: [0.5, 1.2, 1, 0.8] }}
-              transition={{ duration: 3.0, delay: 0.3 }}
-            >
-              <span className="text-red-500 font-black text-xl tracking-wider drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]">
-                ALL IN
-              </span>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </div>
 
       {/* All-in push chips - fixed overlay to avoid overflow clipping */}
       <AnimatePresence>
