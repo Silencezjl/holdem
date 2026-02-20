@@ -65,10 +65,10 @@ function SwipeButton({
   return (
     <div className="relative w-full h-full min-h-[44px]" style={{ touchAction: 'none' }}>
       {/* Background hint track */}
-      {!disabled && !confirmed && (
-        <div className="absolute inset-0 flex flex-col items-center justify-start pt-1.5 opacity-50 pointer-events-none">
-          <span className="text-[10px] font-bold text-white tracking-widest animate-bounce">
-            ↑ 上滑
+      {!disabled && !confirmed && isDragging && (
+        <div className="absolute inset-0 flex flex-col items-center justify-start pt-1.5 opacity-80 pointer-events-none">
+          <span className="text-[10px] font-bold text-white tracking-widest">
+            ↑ 上滑确认
           </span>
         </div>
       )}
@@ -87,6 +87,8 @@ function SwipeButton({
         style={{
           transform: `translateY(${offsetY}px)`,
           touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
           zIndex: isDragging ? 10 : 1
         }}
       >
@@ -155,6 +157,7 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
   const canCall = callAmount > 0 && callAmount <= myChips;
   const minRaise = snapToChip(currentBet + bb);
   const maxRaise = myChips + myBet;
+  const actualMinRaise = Math.min(minRaise, maxRaise);
 
   if (isFolded || isAllIn) {
     return (
@@ -177,13 +180,12 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
   if (showRaise) {
     const effectiveRaise = raiseAmount;
     const addChip = (d: number) => {
-      const base = effectiveRaise === 0 ? minRaise : effectiveRaise;
-      const next = base + d;
+      const next = effectiveRaise + d;
       if (next <= maxRaise) setRaiseAmount(next);
     };
     const removeChip = (d: number) => {
       const next = effectiveRaise - d;
-      if (next >= minRaise) setRaiseAmount(next);
+      if (next >= 0) setRaiseAmount(next);
     };
 
     return (
@@ -198,20 +200,24 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
         {/* Current amount display */}
         <div className="text-center py-1">
           {effectiveRaise === 0 ? (
-            <span className="text-base text-slate-400">请选择加注金额</span>
+            <span className="text-base text-slate-400">请选择加注筹码</span>
           ) : (
-            <>
-              <span className="text-2xl font-bold text-white">{effectiveRaise}</span>
-              <span className="text-xs text-slate-400 ml-2">(加注 {effectiveRaise - currentBet})</span>
-            </>
+            <div className="flex flex-col items-center">
+              <div>
+                <span className="text-2xl font-bold text-white">{effectiveRaise}</span>
+                <span className="text-xs text-slate-400 ml-2">(额外投入 {Math.max(0, effectiveRaise - myBet)})</span>
+              </div>
+              <button onClick={() => setRaiseAmount(0)} className="text-[10px] text-slate-500 hover:text-slate-300 mt-0.5 px-2 py-0.5 rounded bg-slate-800">
+                [清零]
+              </button>
+            </div>
           )}
         </div>
 
         {/* Chip buttons to add */}
         <div className="flex justify-center gap-1.5">
           {CHIP_DENOMS.map(d => {
-            const base = effectiveRaise === 0 ? minRaise : effectiveRaise;
-            const canAdd = base + d <= maxRaise;
+            const canAdd = effectiveRaise + d <= maxRaise;
             return (
               <button
                 key={d}
@@ -234,7 +240,7 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
         {/* Chip buttons to remove */}
         <div className="flex justify-center gap-1.5">
           {CHIP_DENOMS.map(d => {
-            const canRemove = effectiveRaise - d >= minRaise;
+            const canRemove = effectiveRaise - d >= 0;
             return (
               <button
                 key={d}
@@ -255,7 +261,7 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
 
         {/* Quick raise presets */}
         {quickRaises.length > 0 && (
-          <div className="flex gap-1.5 justify-center">
+          <div className="flex gap-1.5 justify-center mt-1">
             {quickRaises.map(q => (
               <button
                 key={q.label}
@@ -278,10 +284,14 @@ export default function ActionPanel({ room, playerId, onAction }: Props) {
             setShowRaise(false);
             setRaiseAmount(0);
           }}
-          disabled={effectiveRaise === 0}
-          className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-white font-bold transition disabled:opacity-40 disabled:cursor-not-allowed"
+          disabled={effectiveRaise < actualMinRaise}
+          className="w-full mt-2 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl text-white font-bold transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {effectiveRaise === 0 ? '请先选择加注金额' : `确认加注 → ${effectiveRaise}`}
+          {effectiveRaise === 0 
+            ? '请先选择加注筹码' 
+            : effectiveRaise < actualMinRaise 
+              ? `至少需加注到 ${actualMinRaise}` 
+              : `确认加注 → ${effectiveRaise}`}
         </button>
       </div>
     );
