@@ -1,5 +1,5 @@
-const API_BASE = process.env.REACT_APP_API_URL || '';
-const WS_BASE = process.env.REACT_APP_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+const API_BASE = import.meta.env.VITE_API_URL || '';
+const WS_BASE = import.meta.env.VITE_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
 export async function fetchRooms() {
   const res = await fetch(`${API_BASE}/api/rooms`);

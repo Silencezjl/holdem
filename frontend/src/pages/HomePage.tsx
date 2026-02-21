@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { createRoom, joinRoom, fetchRooms, getRandomProfile, checkPlayerRoom } from '../api';
 import { RoomListItem } from '../types';
+import CreateRoomForm from '../components/CreateRoomForm';
+import JoinRoomList from '../components/JoinRoomList';
 
 const EMOJIS = [
   // 鸭子系列
@@ -204,134 +206,23 @@ export default function HomePage() {
 
       {/* Tab Content */}
       {tab === 'create' ? (
-        <div className="w-full bg-slate-800 rounded-xl p-4 space-y-4">
-          <div>
-            <label className="block text-sm text-slate-400 mb-1">小盲注 (SB)</label>
-            <div className="flex gap-2 flex-wrap">
-              {[5, 10, 25, 50, 100].map(v => (
-                <button
-                  key={v}
-                  onClick={() => setSb(v)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                    sb === v ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-slate-500 mt-1">大盲注 BB = {sb * 2}</p>
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-400 mb-1">初始筹码</label>
-            <div className="flex gap-2 flex-wrap">
-              {[500, 1000, 2000, 5000, 10000].map(v => (
-                <button
-                  key={v}
-                  onClick={() => setInitialChips(v)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                    initialChips === v ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-400 mb-1">补码限额（筹码低于此值可补码，0=清零才能补）</label>
-            <input
-              type="number"
-              className="w-full bg-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
-              value={rebuyMin}
-              onChange={e => setRebuyMin(Math.max(0, parseInt(e.target.value) || 0))}
-              min={0}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-400 mb-1">最高筹码量（超过后每手结算自动清码一次初始筹码，0=不限）</label>
-            <input
-              type="number"
-              className="w-full bg-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
-              value={maxChips}
-              onChange={e => setMaxChips(Math.max(0, parseInt(e.target.value) || 0))}
-              min={0}
-              placeholder="0 表示不限制"
-            />
-            {maxChips > 0 && (
-              <p className="text-xs text-slate-500 mt-1">超过 {maxChips} 筹码时，自动清码 {initialChips}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-400 mb-1">每手间隔（秒）</label>
-            <div className="flex gap-2 flex-wrap">
-              {[3, 5, 8, 10, 15].map(v => (
-                <button
-                  key={v}
-                  onClick={() => setHandInterval(v)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                    handInterval === v ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {v}s
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={handleCreate}
-            disabled={loading || !name.trim()}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 rounded-xl text-white font-bold text-lg transition"
-          >
-            {loading ? '创建中...' : '创建房间'}
-          </button>
-        </div>
+        <CreateRoomForm
+          sb={sb} setSb={setSb}
+          initialChips={initialChips} setInitialChips={setInitialChips}
+          rebuyMin={rebuyMin} setRebuyMin={setRebuyMin}
+          maxChips={maxChips} setMaxChips={setMaxChips}
+          handInterval={handInterval} setHandInterval={setHandInterval}
+          loading={loading}
+          canSubmit={Boolean(name.trim())}
+          onSubmit={handleCreate}
+        />
       ) : (
-        <div className="w-full space-y-3">
-          {rooms.length === 0 ? (
-            <div className="bg-slate-800 rounded-xl p-8 text-center text-slate-500">
-              <p className="text-4xl mb-2">🏜️</p>
-              <p>暂无可加入的房间</p>
-              <p className="text-xs mt-1">等待房间创建中...</p>
-            </div>
-          ) : (
-            rooms.map(r => (
-              <div key={r.id} className="bg-slate-800 rounded-xl p-4 flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xl">{r.owner_emoji}</span>
-                    <span className="font-semibold text-white">{r.owner_name}</span>
-                    <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">#{r.id}</span>
-                  </div>
-                  <div className="flex gap-3 text-xs text-slate-400">
-                    <span>SB: {r.sb_amount}</span>
-                    <span>BB: {r.bb_amount}</span>
-                    <span>底池: {r.initial_chips}</span>
-                    <span>👥 {r.player_count}在线</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleJoin(r.id)}
-                  disabled={loading}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-white font-medium transition"
-                >
-                  加入
-                </button>
-              </div>
-            ))
-          )}
-          <button
-            onClick={loadRooms}
-            className="w-full py-2 text-slate-400 hover:text-white text-sm transition"
-          >
-            🔄 刷新列表
-          </button>
-        </div>
+        <JoinRoomList
+          rooms={rooms}
+          loading={loading}
+          onJoin={handleJoin}
+          onRefresh={loadRooms}
+        />
       )}
     </div>
   );

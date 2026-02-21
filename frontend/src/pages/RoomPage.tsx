@@ -1,8 +1,8 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { connectWs, leaveRoom } from '../api';
-import { Standing } from '../types';
+import { leaveRoom } from '../api';
+import { Room } from '../types';
 import SeatGrid from '../components/SeatGrid';
 import PlayerCards from '../components/PlayerCards';
 import ActionPanel from '../components/ActionPanel';
@@ -10,8 +10,14 @@ import SettlementPanel from '../components/SettlementPanel';
 import WinChipsAnimation, { WinInfo } from '../components/WinChipsAnimation';
 import MyChipStack from '../components/MyChipStack';
 import BetToPotAnimation from '../components/BetToPotAnimation';
+import FinalStandings from '../components/FinalStandings';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { usePhaseSound } from '../hooks/usePhaseSound';
+import { useRoomWebSocket } from '../hooks/useRoomWebSocket';
+
+import RoomTopBar from '../components/RoomTopBar';
+import BetweenHandsPanel from '../components/BetweenHandsPanel';
+import FirstHandPanel from '../components/FirstHandPanel';
 
 const PHASE_CN: Record<string, string> = {
   hand_start: '开始', preflop: '翻牌前', flop: '翻牌',
@@ -23,110 +29,34 @@ export default function RoomPage() {
   const navigate = useNavigate();
   const {
     playerId, room, connected, latency, error,
-    setRoom, setRoomId, setWs, setConnected, setLatency, addEvent, setError,
-    standings, setStandings, phaseNotice, setPhaseNotice,
+    setRoomId, addEvent, standings, setStandings, phaseNotice, setPhaseNotice,
   } = useStore();
   const roomId = urlRoomId || null;
   useWakeLock();
   const { playPhaseSound } = usePhaseSound();
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
-  const pingTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  const {
+    send,
+    winAnimPlayingRef,
+    winAnimPlaying,
+    setWinAnimPlaying,
+    winAnimationData,
+    setWinAnimationData,
+    potPositionRef,
+    winAnimPotPos,
+    setWinAnimPotPos
+  } = useRoomWebSocket(roomId);
+
   const prevPhaseRef = useRef<string | null>(null);
   const prevConnectionsRef = useRef<Record<string, boolean>>({});
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const countdownActive = useRef(false);
 
-  // Win chips animation state
-  const [winAnimationData, setWinAnimationData] = useState<WinInfo[] | null>(null);
   const lastSettlementRef = useRef<{ potWinners: Record<string, string[]>; pots: { id: string; amount: number }[] } | null>(null);
-  const winAnimPlayingRef = useRef(false);
-  const [winAnimPlaying, setWinAnimPlaying] = useState(false);
-  const potPositionRef = useRef<{ x: number; y: number; width: number } | null>(null);
-  const [winAnimPotPos, setWinAnimPotPos] = useState<{ x: number; y: number; width: number } | null>(null);
-  const pendingSingleWinRef = useRef<{ winner: string; winner_name: string; pot: number } | null>(null);
 
   // Bet-to-pot animation state
   const [betAnim, setBetAnim] = useState<{ amount: number; startPos: { x: number; y: number }; endPos: { x: number; y: number } } | null>(null);
-
-  const connect = useCallback(() => {
-    if (!roomId || !playerId) return;
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
-
-    const socket = connectWs(roomId, playerId);
-
-    socket.onopen = () => {
-      setConnected(true);
-      setError(null);
-      // Start ping interval
-      pingTimer.current = setInterval(() => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-        }
-      }, 3000);
-    };
-
-    socket.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === 'pong') {
-          setLatency(Date.now() - data.timestamp);
-        } else if (data.type === 'room_state') {
-          setRoom(data.room);
-        } else if (data.type === 'event') {
-          if (data.event === 'game_ended' && data.standings) {
-            setStandings(data.standings as Standing[]);
-          }
-          // Capture single-winner (fold victory) events for win animation
-          // Data may be at top level or nested in phase_change
-          const winEvent = data.single_winner ? data : data.phase_change?.single_winner ? data.phase_change : null;
-          if (winEvent && winEvent.single_winner && winEvent.winner && winEvent.pot) {
-            pendingSingleWinRef.current = { winner: winEvent.winner, winner_name: winEvent.winner_name, pot: winEvent.pot };
-            // Use setTimeout to ensure room_state has been processed first
-            setTimeout(() => {
-              const ev = pendingSingleWinRef.current;
-              if (!ev) return;
-              pendingSingleWinRef.current = null;
-              const currentRoom = useStore.getState().room;
-              const p = currentRoom?.players[ev.winner];
-              if (p && ev.pot > 0 && !winAnimPlayingRef.current) {
-                winAnimPlayingRef.current = true;
-                setWinAnimPlaying(true);
-                const savedPos = potPositionRef.current || { x: window.innerWidth / 2, y: window.innerHeight / 3, width: window.innerWidth * 0.8 };
-                setWinAnimPotPos(savedPos);
-                const winInfos: WinInfo[] = [{ playerId: ev.winner, playerEmoji: p.emoji, playerName: ev.winner_name || p.name, amount: ev.pot }];
-                setTimeout(() => setWinAnimationData(winInfos), 100);
-              }
-            }, 50);
-          }
-          addEvent(data.event + (data.detail ? `: ${data.detail}` : ''));
-        } else if (data.type === 'error') {
-          setError(data.message);
-          setTimeout(() => setError(null), 3000);
-        }
-      } catch { }
-    };
-
-    socket.onclose = (event) => {
-      setConnected(false);
-      if (pingTimer.current) clearInterval(pingTimer.current);
-      if (event.code === 4001) {
-        // Invalid room or player - redirect to home
-        setRoomId(null);
-        navigate('/');
-        return;
-      }
-      reconnectTimer.current = setTimeout(() => connect(), 2000);
-    };
-
-    socket.onerror = () => {
-      setConnected(false);
-    };
-
-    wsRef.current = socket;
-    setWs(socket);
-  }, [roomId, playerId, setRoom, setWs, setConnected, setLatency, addEvent, setError, setStandings, setRoomId, navigate]);
 
   const handleLeave = useCallback(async () => {
     if (roomId && playerId) {
@@ -135,19 +65,6 @@ export default function RoomPage() {
     setRoomId(null);
     navigate('/');
   }, [roomId, playerId, setRoomId, navigate]);
-
-  useEffect(() => {
-    if (!playerId || !roomId) {
-      navigate('/');
-      return;
-    }
-    connect();
-    return () => {
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      if (pingTimer.current) clearInterval(pingTimer.current);
-      if (wsRef.current) wsRef.current.close();
-    };
-  }, [playerId, roomId, connect, navigate]);
 
   // Track settlement proposal for win animation
   useEffect(() => {
@@ -269,9 +186,7 @@ export default function RoomPage() {
           if (countdownRef.current) clearInterval(countdownRef.current);
           countdownActive.current = false;
           // Auto-ready
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'ready' }));
-          }
+          send({ type: 'ready' });
           setCountdown(null);
         }
       }, 1000);
@@ -284,13 +199,7 @@ export default function RoomPage() {
       if (countdownRef.current) clearInterval(countdownRef.current);
       countdownActive.current = false;
     };
-  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, room?.players[playerId ?? '']?.chips, playerId, winAnimPlaying]);
-
-  const send = useCallback((data: any) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
-    }
-  }, []);
+  }, [room?.status, room?.hand_number, room?.players[playerId ?? '']?.ready, room?.players[playerId ?? '']?.chips, playerId, winAnimPlaying, send]);
 
   const handleSit = (seat: number) => send({ type: 'sit', seat });
   const handleStand = () => send({ type: 'stand' });
@@ -325,40 +234,11 @@ export default function RoomPage() {
   // Final standings screen
   if (standings) {
     return (
-      <div className="flex flex-col min-h-screen max-w-lg mx-auto px-4 py-6">
-        <h2 className="text-2xl font-bold text-center text-white mb-1">🏆 最终结算</h2>
-        <p className="text-center text-xs text-slate-400 mb-4">整场游戏输赢排名</p>
-        <div className="space-y-2">
-          {standings.map((s: Standing, idx: number) => (
-            <div key={s.player_id} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-              idx === 0 ? 'border-yellow-500 bg-yellow-900/20' :
-              s.net >= 0 ? 'border-green-700/50 bg-slate-800' : 'border-red-700/50 bg-slate-800'
-            }`}>
-              <span className="text-lg font-bold text-slate-400 w-6">
-                {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`}
-              </span>
-              <span className="text-xl">{s.player_emoji}</span>
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-medium text-white">{s.player_name}</span>
-                <div className="text-[10px] text-slate-400">
-                  筹码 {s.chips} · 投入 {s.total_investment}
-                  {s.total_rebuys > 0 && ` · 补码 ${s.total_rebuys * (room?.initial_chips || 0)}`}
-                  {s.total_cashouts > 0 && ` · 清码 ${s.total_cashouts}`}
-                </div>
-              </div>
-              <span className={`text-lg font-bold ${s.net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {s.net >= 0 ? '+' : ''}{s.net}
-              </span>
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={() => { setStandings(null); setRoomId(null); navigate('/'); }}
-          className="mt-6 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition"
-        >
-          返回首页
-        </button>
-      </div>
+      <FinalStandings 
+        standings={standings} 
+        room={room} 
+        onClose={() => { setStandings(null); setRoomId(null); navigate('/'); }} 
+      />
     );
   }
 
@@ -386,27 +266,16 @@ export default function RoomPage() {
   return (
     <div className="flex flex-col min-h-screen max-w-lg mx-auto">
       {/* Top bar */}
-      <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {!isPlaying && (
-              <button onClick={handleLeave} className="text-slate-500 hover:text-white text-[11px]">退出</button>
-            )}
-            <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">#{room.id}</span>
-            {room.hand_number > 0 && (
-              <span className="text-[11px] text-slate-500">第{room.hand_number}手</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span>SB:{room.sb_amount}</span>
-            <span>BB:{room.bb_amount}</span>
-            <span className={connected ? 'text-green-400' : 'text-red-400'}>
-              {connected ? '●' : '○'}
-            </span>
-            <span className="text-slate-500">{latency}ms</span>
-          </div>
-        </div>
-      </div>
+      <RoomTopBar 
+        roomId={room.id}
+        handNumber={room.hand_number}
+        sbAmount={room.sb_amount}
+        bbAmount={room.bb_amount}
+        connected={connected}
+        latency={latency}
+        isPlaying={isPlaying}
+        onLeave={handleLeave}
+      />
 
       {/* Error bar */}
       {error && (
@@ -419,84 +288,32 @@ export default function RoomPage() {
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {isWaiting && firstHand ? (
           <>
-            {/* First hand waiting state */}
-            <div className="bg-slate-800/50 rounded-xl p-3 text-center">
-              <p className="text-sm text-slate-400">
-                初始筹码: <span className="text-white font-bold">{room.initial_chips}</span>
-                {room.rebuy_minimum > 0 && (
-                  <span className="ml-2">补码限额: <span className="text-white font-bold">≤{room.rebuy_minimum}</span></span>
-                )}
-                {room.rebuy_minimum === 0 && (
-                  <span className="ml-2 text-slate-500">清零可补码</span>
-                )}
-              </p>
-            </div>
-
+            <FirstHandPanel 
+              room={room}
+              playerId={playerId}
+              isSeated={isSeated}
+              canRebuy={canRebuy}
+              onReady={handleReady}
+              onRebuy={handleRebuy}
+            />
             <SeatGrid room={room} playerId={playerId} onSit={handleSit} onStand={handleStand} />
-
-            {isSeated && (
-              <div className="space-y-2">
-                <button
-                  onClick={handleReady}
-                  className={`w-full py-3 rounded-xl font-bold text-lg transition ${
-                    myPlayer.ready ? 'bg-green-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
-                  }`}
-                >
-                  {myPlayer.ready ? '✓ 已准备 (点击取消)' : '准备'}
-                </button>
-                {canRebuy && (
-                  <button onClick={handleRebuy} className="w-full py-2 bg-orange-600 hover:bg-orange-700 rounded-xl text-white font-medium transition">
-                    补码 → {room.initial_chips}
-                  </button>
-                )}
-              </div>
-            )}
-
-            <div className="text-center text-xs text-slate-500">
-              {Object.values(room.players).filter(p => p.seat >= 0).length} 人就座 ·{' '}
-              {Object.values(room.players).filter(p => p.ready).length} 人准备 · 至少需要 2 人
-            </div>
           </>
         ) : isWaiting && !firstHand ? (
           <>
             {/* Between hands - auto countdown */}
             <PlayerCards room={room} playerId={playerId} phaseNotice={phaseNotice} />
 
-            <div className="bg-slate-800 rounded-xl p-4 text-center space-y-2">
-              {canCashout ? (
-                <p className="text-sm text-purple-400">筹码超过上限 ({room.max_chips})，请清码后继续</p>
-              ) : canRebuy ? (
-                <p className="text-sm text-orange-400">筹码不足，请补码后继续</p>
-              ) : countdown !== null ? (
-                <div>
-                  <p className="text-slate-400 text-sm">下一手自动开始</p>
-                  <p className="text-4xl font-bold text-white mt-1">{countdown}</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {myPlayer?.ready ? (
-                    <p className="text-green-400 text-sm">✓ 已准备，等待其他玩家...</p>
-                  ) : (
-                    <p className="text-slate-400 text-sm">请点击准备</p>
-                  )}
-                  {Object.values(room.players).filter(p => p.seat >= 0 && !p.ready).length > 0 && (
-                    <p className="text-[11px] text-slate-500">
-                      等待: {Object.values(room.players)
-                        .filter(p => p.seat >= 0 && !p.ready)
-                        .map(p => p.name)
-                        .join(', ')}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Owner end game button */}
-            {isOwner && (
-              <button onClick={handleEndGame} className="w-full py-2 bg-red-900/60 hover:bg-red-800 border border-red-700 rounded-xl text-red-300 font-medium text-sm transition">
-                结束游戏 · 最终结算
-              </button>
-            )}
+            <BetweenHandsPanel 
+              room={room}
+              playerId={playerId}
+              isOwner={isOwner}
+              canRebuy={canRebuy}
+              canCashout={canCashout}
+              countdown={countdown}
+              onRebuy={handleRebuy}
+              onCashout={handleCashout}
+              onEndGame={handleEndGame}
+            />
           </>
         ) : (
           <>
