@@ -15,6 +15,8 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: #0f172a;
   color: #e2e8f0;
+  overflow: hidden; /* 防止浏览器整体产生滚动条 */
+  overscroll-behavior: none; /* 防止 iOS 橡皮筋回弹效果 */
 }
 
 input[type="range"] {

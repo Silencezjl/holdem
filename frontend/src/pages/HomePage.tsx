@@ -120,7 +120,6 @@ export default function HomePage() {
       setRoomId(res.room_id);
       navigate(`/room/${res.room_id}`);
     } catch (e: any) {
-      alert('加入失败: ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -128,102 +127,108 @@ export default function HomePage() {
 
   if (checking) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin text-4xl mb-4">🃏</div>
-          <p className="text-slate-400">检查对局中...</p>
+      <div className="flex flex-col h-[100dvh] max-w-lg mx-auto overflow-hidden">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin text-4xl mb-4">🃏</div>
+            <p className="text-slate-400">检查对局中...</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center min-h-screen px-4 py-6 max-w-lg mx-auto">
-      {/* Header */}
-      <div className="text-center mb-6">
-        <h1 className="text-3xl font-bold text-white mb-1">🃏 Holdem Chips</h1>
-        <p className="text-slate-400 text-sm">线下德扑筹码管理平台</p>
-      </div>
+    <div className="flex flex-col h-[100dvh] max-w-lg mx-auto overflow-hidden">
+      <div className="flex-none px-4 pt-6 pb-2">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <h1 className="text-3xl font-bold text-white mb-1">🃏 Holdem Chips</h1>
+          <p className="text-slate-400 text-sm">线下德扑筹码管理平台</p>
+        </div>
 
-      {/* Profile */}
-      <div className="w-full bg-slate-800 rounded-xl p-4 mb-4">
-        <div className="flex items-center gap-3">
+        {/* Profile */}
+        <div className="w-full bg-slate-800 rounded-xl p-4 mb-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              className="text-4xl w-14 h-14 flex items-center justify-center bg-slate-700 rounded-full hover:bg-slate-600 transition"
+            >
+              {emoji}
+            </button>
+            <input
+              className="flex-1 bg-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="你的昵称"
+              maxLength={20}
+            />
+            <button
+              onClick={initProfile}
+              className="text-slate-400 hover:text-white p-2"
+              title="随机"
+            >
+              🎲
+            </button>
+          </div>
+          {showEmojiPicker && (
+            <div className="grid grid-cols-10 gap-1 mt-3 p-2 bg-slate-700 rounded-lg">
+              {EMOJIS.map(e => (
+                <button
+                  key={e}
+                  onClick={() => { setEmoji(e); setShowEmojiPicker(false); }}
+                  className={`text-xl p-1 rounded hover:bg-slate-600 ${emoji === e ? 'bg-blue-600' : ''}`}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="w-full flex mb-4 bg-slate-800 rounded-xl overflow-hidden">
           <button
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="text-4xl w-14 h-14 flex items-center justify-center bg-slate-700 rounded-full hover:bg-slate-600 transition"
+            onClick={() => setTab('create')}
+            className={`flex-1 py-3 text-center font-semibold transition ${
+              tab === 'create' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+            }`}
           >
-            {emoji}
+            🏠 创建房间
           </button>
-          <input
-            className="flex-1 bg-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="你的昵称"
-            maxLength={20}
-          />
           <button
-            onClick={initProfile}
-            className="text-slate-400 hover:text-white p-2"
-            title="随机"
+            onClick={() => setTab('join')}
+            className={`flex-1 py-3 text-center font-semibold transition ${
+              tab === 'join' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'
+            }`}
           >
-            🎲
+            🚪 加入房间
           </button>
         </div>
-        {showEmojiPicker && (
-          <div className="grid grid-cols-10 gap-1 mt-3 p-2 bg-slate-700 rounded-lg">
-            {EMOJIS.map(e => (
-              <button
-                key={e}
-                onClick={() => { setEmoji(e); setShowEmojiPicker(false); }}
-                className={`text-xl p-1 rounded hover:bg-slate-600 ${emoji === e ? 'bg-blue-600' : ''}`}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-6 w-full">
+        {/* Tab Content */}
+        {tab === 'create' ? (
+          <CreateRoomForm
+            sb={sb} setSb={setSb}
+            initialChips={initialChips} setInitialChips={setInitialChips}
+            rebuyMin={rebuyMin} setRebuyMin={setRebuyMin}
+            maxChips={maxChips} setMaxChips={setMaxChips}
+            handInterval={handInterval} setHandInterval={setHandInterval}
+            loading={loading}
+            canSubmit={Boolean(name.trim())}
+            onSubmit={handleCreate}
+          />
+        ) : (
+          <JoinRoomList
+            rooms={rooms}
+            loading={loading}
+            onJoin={handleJoin}
+            onRefresh={loadRooms}
+          />
         )}
       </div>
-
-      {/* Tabs */}
-      <div className="w-full flex mb-4 bg-slate-800 rounded-xl overflow-hidden">
-        <button
-          onClick={() => setTab('create')}
-          className={`flex-1 py-3 text-center font-semibold transition ${
-            tab === 'create' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          🏠 创建房间
-        </button>
-        <button
-          onClick={() => setTab('join')}
-          className={`flex-1 py-3 text-center font-semibold transition ${
-            tab === 'join' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          🚪 加入房间
-        </button>
-      </div>
-
-      {/* Tab Content */}
-      {tab === 'create' ? (
-        <CreateRoomForm
-          sb={sb} setSb={setSb}
-          initialChips={initialChips} setInitialChips={setInitialChips}
-          rebuyMin={rebuyMin} setRebuyMin={setRebuyMin}
-          maxChips={maxChips} setMaxChips={setMaxChips}
-          handInterval={handInterval} setHandInterval={setHandInterval}
-          loading={loading}
-          canSubmit={Boolean(name.trim())}
-          onSubmit={handleCreate}
-        />
-      ) : (
-        <JoinRoomList
-          rooms={rooms}
-          loading={loading}
-          onJoin={handleJoin}
-          onRefresh={loadRooms}
-        />
-      )}
     </div>
   );
 }

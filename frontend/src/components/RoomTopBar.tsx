@@ -22,7 +22,7 @@ export default function RoomTopBar({
   onLeave 
 }: Props) {
   return (
-    <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-2">
+    <div className="flex-none z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {!isPlaying && (

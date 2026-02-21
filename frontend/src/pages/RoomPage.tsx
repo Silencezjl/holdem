@@ -244,7 +244,7 @@ export default function RoomPage() {
 
   if (!room || !playerId) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-[100dvh]">
         <div className="text-center">
           <div className="animate-spin text-4xl mb-4">🃏</div>
           <p className="text-slate-400">连接房间中...</p>
@@ -264,7 +264,7 @@ export default function RoomPage() {
   const firstHand = room.hand_number === 0;
 
   return (
-    <div className="flex flex-col min-h-screen max-w-lg mx-auto">
+    <div className="flex flex-col h-[100dvh] max-w-lg mx-auto overflow-hidden">
       {/* Top bar */}
       <RoomTopBar 
         roomId={room.id}
@@ -339,7 +339,7 @@ export default function RoomPage() {
 
       {/* Bottom fixed area - my info + actions */}
       {isPlaying && myPlayer && !isShowdown && (
-        <div className="sticky bottom-0 z-10 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-4 py-2">
+        <div className="flex-none z-10 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-4 py-2">
           {/* My chips info */}
           <div className="flex items-center justify-between mb-2 text-sm">
             <span className="text-slate-400">
@@ -375,7 +375,7 @@ export default function RoomPage() {
 
       {/* Bottom fixed cashout/rebuy buttons for between-hands */}
       {isWaiting && !firstHand && myPlayer && (canCashout || canRebuy) && (
-        <div className="sticky bottom-0 z-10 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-4 py-3">
+        <div className="flex-none z-10 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-4 py-3">
           {canCashout && (
             <button onClick={handleCashout} className="w-full py-3 bg-purple-600 hover:bg-purple-700 rounded-xl text-white font-bold text-lg transition">
               清码 -{room.initial_chips} → 剩余 {myPlayer.chips - room.initial_chips}

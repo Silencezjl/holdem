@@ -56,13 +56,15 @@ export function useRoomWebSocket(roomId: string | null) {
           if (data.event === 'action' && data.action === 'all_in') {
             // Trigger speech synthesis for all-in
             if ('speechSynthesis' in window) {
-              window.speechSynthesis.cancel();
               const text = `${data.player_name} All in`;
               const utterance = new SpeechSynthesisUtterance(text);
               utterance.lang = 'zh-CN';
               utterance.rate = 1.1; 
               utterance.pitch = 1.1;
               window.speechSynthesis.speak(utterance);
+              // iOS Safari 修复：在 WebSocket 的异步回调中触发语音极易被挂起，
+              // 必须在 speak() 之后显式调用 resume()。另外千万不能用 cancel()，它会导致 iOS 的语音队列永久卡死。
+              window.speechSynthesis.resume();
             }
           }
           // Capture single-winner (fold victory) events for win animation
